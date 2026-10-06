@@ -1,10 +1,4 @@
-# Changelog
-
-## 1.0.0 - 2026-10-06
-
 <!--
 Décrivez ici les changements destinés à la prochaine release.
 Ce contenu sera déplacé dans changelog.md par une commande make:prod:patch|minor|major.
 -->
-
-version MVP de l'application
