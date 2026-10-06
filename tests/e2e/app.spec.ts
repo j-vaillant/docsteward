@@ -1,0 +1,288 @@
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import { _electron as electron, expect, test } from '@playwright/test';
+
+// Electron exposes its executable path through CommonJS.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const electronPath = require('electron') as string;
+
+test('exige une connexion avant d’afficher la bibliothèque', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'docsteward-login-e2e-profile-'));
+  const electronApp = await electron.launch({
+    executablePath: electronPath,
+    args: [resolve('.')],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      DOCSTEWARD_E2E_REQUIRE_LOGIN: '1',
+      DOCSTEWARD_E2E_USER_DATA: userData,
+    },
+  });
+  try {
+    const page = await electronApp.firstWindow();
+    await expect(page.getByRole('heading', { name: 'Retrouvez votre bibliothèque' })).toBeVisible();
+    await expect(page.getByLabel('Adresse e-mail')).toBeVisible();
+    await expect(page.getByLabel('Mot de passe')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Se connecter' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ajouter un dossier' })).toHaveCount(0);
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test('prévisualise un document local sans permettre sa modification', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'docsteward-e2e-'));
+  await mkdir(join(workspace, '01-projets'));
+  const file = join(workspace, '01-projets', 'bonjour.md');
+  await writeFile(
+    file,
+    `# Bonjour\n\nUne bibliothèque locale pour les documents importants.\n\n## Formats\n\n- PDF et fichiers Word\n- Classeurs Excel et fichiers texte\n\n## Principe\n\nConsulter sans jamais modifier.\n\n${Array.from({ length: 80 }, (_, index) => `Ligne de contrôle ${index + 1}`).join('\n')}\n`,
+  );
+  await Promise.all(
+    Array.from({ length: 40 }, (_, index) =>
+      writeFile(
+        join(workspace, '01-projets', `document-${String(index + 1).padStart(2, '0')}.txt`),
+        `Document ${index + 1}\n`,
+      ),
+    ),
+  );
+  await writeFile(join(workspace, 'lisez-moi.md'), '# Bienvenue\n');
+  await writeFile(join(workspace, 'journal.txt'), 'Entrée locale\n');
+  const userData = await mkdtemp(join(tmpdir(), 'docsteward-e2e-profile-'));
+  const electronApp = await electron.launch({
+    executablePath: electronPath,
+    args: [resolve('.')],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      DOCSTEWARD_E2E_WORKSPACE: workspace,
+      DOCSTEWARD_E2E_USER_DATA: userData,
+    },
+  });
+  electronApp.process().stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk));
+  try {
+    const page = await electronApp.firstWindow();
+    await expect(page.getByText('Serveur prêt')).toBeVisible();
+    await page.getByRole('button', { name: 'Compte de e2e@docsteward.local' }).click();
+    await expect(page.getByText('e2e@docsteward.local')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Se déconnecter' })).toBeVisible();
+    await page.screenshot({ path: '.impeccable/review/profile-menu.png' });
+    await page.getByRole('button', { name: 'Compte de e2e@docsteward.local' }).click();
+    await expect(page.getByRole('button', { name: 'Ajouter un dossier' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Choisir un autre dossier' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Documents', exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', { name: `Tableau de bord : ${basename(workspace)}` }),
+    ).toBeVisible();
+    await expect(page.getByRole('status', { name: /Index documentaire/ })).toBeVisible();
+    await page.getByRole('button', { name: '01-projets' }).click();
+    await page.getByRole('button', { name: 'bonjour.md' }).click();
+    const preview = page.locator('.text-preview');
+    await expect(preview).toContainText('Une bibliothèque locale');
+    await expect(page.getByRole('button', { name: /Enregistrer/ })).toHaveCount(0);
+    await expect(page.getByRole('textbox')).toHaveCount(0);
+    await expect(page.getByText('Lecture seule', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('.inspector')).toBeVisible();
+    await page.getByRole('button', { name: 'Replier le volet d’informations' }).click();
+    await expect(page.locator('.inspector')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Informations' }).click();
+    await expect(page.locator('.inspector')).toBeVisible();
+    await page.getByRole('tab', { name: 'Recherche' }).click();
+    await expect(page.locator('.inspector')).toHaveCount(0);
+    await page.getByRole('tab', { name: 'bonjour.md' }).click();
+    await page.getByRole('button', { name: 'document-01.txt' }).click();
+    await page.getByRole('button', { name: 'document-02.txt' }).click();
+    await page.getByRole('button', { name: 'document-03.txt' }).click();
+    await expect(page.locator('.preview-tab')).toHaveCount(3);
+    await page.locator('.preview-overflow summary').click();
+    await page.locator('.preview-overflow-select', { hasText: 'document-03.txt' }).click();
+    await expect(page.getByText('Document 3', { exact: true })).toBeVisible();
+    await page.getByRole('tab', { name: 'bonjour.md' }).click();
+    const browserWindow = await electronApp.browserWindow(page);
+    await browserWindow.evaluate((window: { setSize(width: number, height: number): void }) => {
+      window.setSize(1360, 860);
+    });
+    await page.screenshot({ path: '.impeccable/review/desktop.png' });
+    await browserWindow.evaluate((window: { setSize(width: number, height: number): void }) => {
+      window.setSize(940, 700);
+    });
+    const tree = page.locator('.tree');
+    await expect
+      .poll(() => tree.evaluate((element) => element.scrollHeight > element.clientHeight))
+      .toBe(true);
+    await tree.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(() => tree.evaluate((element) => element.scrollTop > 0)).toBe(true);
+    await expect
+      .poll(() => preview.evaluate((element) => element.scrollHeight > element.clientHeight))
+      .toBe(true);
+    await preview.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(() => preview.evaluate((element) => element.scrollTop > 0)).toBe(true);
+    await page.screenshot({ path: '.impeccable/review/mobile.png' });
+    await page.getByRole('button', { name: 'Compte de e2e@docsteward.local' }).click();
+    await page.getByRole('button', { name: 'Se déconnecter' }).click();
+    await expect(page.getByRole('heading', { name: 'Retrouvez votre bibliothèque' })).toBeVisible();
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test('active le RAG, épingle et actualise un indicateur persistant', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'docsteward-rag-e2e-'));
+  await writeFile(join(workspace, 'chiffre-affaires.txt'), 'Chiffre d’affaires total : 22 000 €\n');
+  const userData = await mkdtemp(join(tmpdir(), 'docsteward-rag-e2e-profile-'));
+  const electronApp = await electron.launch({
+    executablePath: electronPath,
+    args: [resolve('.')],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      DOCSTEWARD_E2E_RAG: '1',
+      DOCSTEWARD_E2E_WORKSPACE: workspace,
+      DOCSTEWARD_E2E_USER_DATA: userData,
+    },
+  });
+  electronApp.process().stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk));
+  try {
+    const page = await electronApp.firstWindow();
+    const settingsWindow = await electronApp.browserWindow(page);
+    await expect(page.getByRole('button', { name: 'Configuration IA' })).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Configuration' }).click();
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Activer pour ce dossier' }).click();
+    await page.getByRole('button', { name: 'Indexer les documents' }).click();
+    await writeFile(join(workspace, 'nouveau-document.txt'), 'Nouveau document\n');
+    await page.getByRole('button', { name: 'Mettre à jour l’index' }).click();
+    await expect(page.getByRole('button', { name: 'nouveau-document.txt' })).toBeVisible();
+    await expect(page.locator('.index-state')).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Recherche' }).click();
+    await expect(page.locator('.index-state')).toHaveCount(0);
+    await page.getByLabel('Que voulez vous savoir ?').fill('Quel est mon chiffre d’affaires ?');
+    await page.getByRole('button', { name: 'chiffre-affaires.txt' }).click();
+    await expect(page.getByText('Chiffre d’affaires total : 22 000 €')).toBeVisible();
+    await page.getByRole('tab', { name: 'Recherche' }).click();
+    await expect(page.getByLabel('Que voulez vous savoir ?')).toHaveValue(
+      'Quel est mon chiffre d’affaires ?',
+    );
+    await page.getByRole('button', { name: 'Poser la question' }).click();
+    await expect(page.getByText('Le chiffre d’affaires total est de 22 000 €.')).toBeVisible();
+    await page.getByRole('tab', { name: 'chiffre-affaires.txt' }).click();
+    await page.getByRole('tab', { name: 'Recherche' }).click();
+    await expect(page.getByText('Le chiffre d’affaires total est de 22 000 €.')).toBeVisible();
+    await page.getByRole('button', { name: 'Épingler comme indicateur' }).click();
+    await expect(page.getByRole('dialog', { name: 'Créer un indicateur' })).toBeVisible();
+    await expect(page.getByLabel('Titre')).toHaveValue('Chiffre d’affaires total');
+    await settingsWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(1360, 860),
+    );
+    await page.screenshot({ path: '.impeccable/review/pin-dialog-desktop.png' });
+    await settingsWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(940, 700),
+    );
+    await page.screenshot({ path: '.impeccable/review/pin-dialog-compact.png' });
+    await page.getByRole('button', { name: 'Ajouter aux indicateurs' }).click();
+    await expect(page.getByRole('dialog', { name: 'Créer un indicateur' })).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Tableau de bord' }).click();
+    await expect(page.locator('.index-state').getByText('Index prêt')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Chiffre d’affaires total' })).toBeVisible();
+    const browserWindow = await electronApp.browserWindow(page);
+    await browserWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(1360, 860),
+    );
+    await page.screenshot({ path: '.impeccable/review/desktop.png' });
+    await browserWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(940, 700),
+    );
+    await page.screenshot({ path: '.impeccable/review/mobile.png' });
+    await page.getByRole('button', { name: 'Actualiser' }).click();
+    await expect(page.getByText(/Actualisé/)).toBeVisible();
+    await page.reload();
+    await page.getByRole('tab', { name: 'Tableau de bord' }).click();
+    await expect(page.getByRole('heading', { name: 'Chiffre d’affaires total' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Configuration' }).click();
+    await page.screenshot({ path: '.impeccable/review/folder-configuration-mobile.png' });
+    await browserWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(1360, 860),
+    );
+    await page.screenshot({ path: '.impeccable/review/folder-configuration-desktop.png' });
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: 'Retirer ce dossier de la bibliothèque' }).click();
+    await expect(page.getByRole('button', { name: 'Choisir un dossier' })).toBeVisible();
+  } finally {
+    await electronApp.close();
+  }
+});
+
+test('prépare et active une organisation virtuelle sans modifier le disque', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'docsteward-sorter-e2e-'));
+  const file = join(workspace, 'facture-acme.txt');
+  const original = 'Facture Acme 2026\n';
+  await writeFile(file, original);
+  const userData = await mkdtemp(join(tmpdir(), 'docsteward-sorter-profile-'));
+  const electronApp = await electron.launch({
+    executablePath: electronPath,
+    args: [resolve('.')],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      DOCSTEWARD_E2E_RAG: '1',
+      DOCSTEWARD_E2E_WORKSPACE: workspace,
+      DOCSTEWARD_E2E_USER_DATA: userData,
+    },
+  });
+  try {
+    const page = await electronApp.firstWindow();
+    await page.getByRole('tab', { name: 'Configuration' }).click();
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Activer pour ce dossier' }).click();
+    await page.getByRole('tab', { name: 'Organisation' }).click();
+    await page
+      .getByLabel('Comment souhaitez-vous organiser vos documents ?')
+      .fill('Classe les factures par année et fournisseur.');
+    await page.getByRole('button', { name: 'Préparer l’organisation' }).click();
+    await expect(page.getByRole('heading', { name: 'Organisation proposée' })).toBeVisible();
+    await expect(page.getByText('Organisation/facture-acme.txt')).toBeVisible();
+    const sorterWindow = await electronApp.browserWindow(page);
+    await sorterWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(1360, 860),
+    );
+    await page.screenshot({ path: '.impeccable/review/sorter-preview-desktop.png' });
+    await sorterWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(940, 700),
+    );
+    await page.screenshot({ path: '.impeccable/review/sorter-preview-compact.png' });
+    await sorterWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(1360, 860),
+    );
+    await page.getByRole('button', { name: 'Utiliser cette organisation' }).click();
+    await expect(page.getByText(/Cette organisation remplacera/)).toBeVisible();
+    await page.getByRole('button', { name: 'Utiliser cette organisation' }).click();
+    await expect(
+      page.locator('.app-notice', { hasText: 'Organisation activée — aucun fichier déplacé' }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Organisation', exact: true }).click();
+    await expect(page.getByRole('button', { name: /facture-acme.txt/ })).toBeVisible();
+    expect(await readFile(file, 'utf8')).toBe(original);
+    await page
+      .locator('.sorter-active-actions')
+      .getByRole('button', { name: 'Revenir à l’origine' })
+      .click();
+    await expect(page.getByText(/affichera de nouveau l’organisation réelle/)).toBeVisible();
+    await page
+      .locator('.sorter-confirmation')
+      .getByRole('button', { name: 'Revenir à l’origine' })
+      .click();
+    await expect(
+      page.locator('.app-notice', {
+        hasText: 'Organisation d’origine restaurée — aucun fichier modifié',
+      }),
+    ).toBeVisible();
+    expect(await readFile(file, 'utf8')).toBe(original);
+  } finally {
+    await electronApp.close();
+  }
+});

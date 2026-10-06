@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "workspaces": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "displayName": "Mon projet",
+      "rootPath": "/chemin/local/choisi-par-le-dialogue-natif",
+      "access": "read-write"
+    }
+  ]
+}

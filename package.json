@@ -1,0 +1,61 @@
+{
+  "name": "docsteward",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prévisualisation desktop locale et sécurisée de documents",
+  "main": ".vite/build/main.js",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build && electron .",
+    "build:server": "vite build --config vite.server.config.ts",
+    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "build": "npm run build:server && vite build --config vite.main.config.ts && vite build --config vite.preload.config.ts && npm run build:renderer",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "npm run build && playwright test",
+    "package": "npm run build:server && npm run build:renderer && electron-forge package",
+    "make": "npm run build:server && npm run build:renderer && electron-forge make"
+  },
+  "dependencies": {
+    "@llamaindex/liteparse": "2.15.1",
+    "@llamaindex/openai": "0.4.22",
+    "fastify": "5.12.5",
+    "llamaindex": "0.12.1",
+    "openai": "7.28.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "word-extractor": "^1.0.4",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "8.0.1",
+    "@electron-forge/maker-dmg": "8.0.1",
+    "@electron-forge/maker-squirrel": "8.0.1",
+    "@electron-forge/maker-zip": "8.0.1",
+    "@electron-forge/plugin-vite": "8.0.1",
+    "@eslint/js": "9.39.1",
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.6.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.5.1",
+    "eslint": "9.39.1",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "eslint-plugin-react-refresh": "0.4.24",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.2",
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
+  }
+}

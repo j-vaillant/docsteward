@@ -1,0 +1,431 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-06T03:58:13Z",
+  "title": "Design System: DocSteward",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Fresh Paper",
+        "canonical": "#fffefa",
+        "tonalRamp": [
+          "oklch(15% 0.008 90)",
+          "oklch(27% 0.008 90)",
+          "oklch(39% 0.008 90)",
+          "oklch(51% 0.008 90)",
+          "oklch(63% 0.008 90)",
+          "oklch(75% 0.008 90)",
+          "oklch(87% 0.008 90)",
+          "#fffefa"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Book Cloth Canvas",
+        "canonical": "#f3efe6",
+        "tonalRamp": [
+          "oklch(15% 0.018 84)",
+          "oklch(27% 0.018 84)",
+          "oklch(39% 0.018 84)",
+          "oklch(51% 0.018 84)",
+          "oklch(63% 0.018 84)",
+          "oklch(75% 0.018 84)",
+          "oklch(87% 0.018 84)",
+          "#f3efe6"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Printer's Ink",
+        "canonical": "#1d211f",
+        "tonalRamp": [
+          "#1d211f",
+          "oklch(27% 0.008 155)",
+          "oklch(39% 0.008 155)",
+          "oklch(51% 0.008 155)",
+          "oklch(63% 0.008 155)",
+          "oklch(75% 0.008 155)",
+          "oklch(87% 0.008 155)",
+          "oklch(95% 0.008 155)"
+        ]
+      },
+      "muted-ink": {
+        "role": "neutral",
+        "displayName": "Pencil Graphite",
+        "canonical": "#686b66",
+        "tonalRamp": [
+          "oklch(15% 0.008 125)",
+          "oklch(27% 0.008 125)",
+          "#686b66",
+          "oklch(51% 0.008 125)",
+          "oklch(63% 0.008 125)",
+          "oklch(75% 0.008 125)",
+          "oklch(87% 0.008 125)",
+          "oklch(95% 0.008 125)"
+        ]
+      },
+      "binding-rule": {
+        "role": "neutral",
+        "displayName": "Binding Rule",
+        "canonical": "#d8d1c3",
+        "tonalRamp": [
+          "oklch(15% 0.018 82)",
+          "oklch(27% 0.018 82)",
+          "oklch(39% 0.018 82)",
+          "oklch(51% 0.018 82)",
+          "oklch(63% 0.018 82)",
+          "oklch(75% 0.018 82)",
+          "#d8d1c3",
+          "oklch(95% 0.018 82)"
+        ]
+      },
+      "binding-rule-soft": {
+        "role": "neutral",
+        "displayName": "Soft Binding Rule",
+        "canonical": "#e9e3d8",
+        "tonalRamp": [
+          "oklch(15% 0.014 82)",
+          "oklch(27% 0.014 82)",
+          "oklch(39% 0.014 82)",
+          "oklch(51% 0.014 82)",
+          "oklch(63% 0.014 82)",
+          "oklch(75% 0.014 82)",
+          "oklch(87% 0.014 82)",
+          "#e9e3d8"
+        ]
+      },
+      "annotation-blue": {
+        "role": "primary",
+        "displayName": "Annotation Blue",
+        "canonical": "#1d4ed8",
+        "tonalRamp": [
+          "oklch(15% 0.18 264)",
+          "oklch(27% 0.18 264)",
+          "oklch(39% 0.18 264)",
+          "#1d4ed8",
+          "oklch(63% 0.18 264)",
+          "oklch(75% 0.14 264)",
+          "oklch(87% 0.08 264)",
+          "oklch(95% 0.035 264)"
+        ]
+      },
+      "annotation-blue-soft": {
+        "role": "primary",
+        "displayName": "Washed Annotation Blue",
+        "canonical": "#e7edff",
+        "tonalRamp": [
+          "oklch(15% 0.05 264)",
+          "oklch(27% 0.05 264)",
+          "oklch(39% 0.05 264)",
+          "oklch(51% 0.05 264)",
+          "oklch(63% 0.05 264)",
+          "oklch(75% 0.05 264)",
+          "oklch(87% 0.05 264)",
+          "#e7edff"
+        ]
+      },
+      "safe-green": {
+        "role": "secondary",
+        "displayName": "Safe Green Ink",
+        "canonical": "#27794c",
+        "tonalRamp": [
+          "oklch(15% 0.1 151)",
+          "oklch(27% 0.1 151)",
+          "#27794c",
+          "oklch(51% 0.1 151)",
+          "oklch(63% 0.1 151)",
+          "oklch(75% 0.08 151)",
+          "oklch(87% 0.05 151)",
+          "oklch(95% 0.025 151)"
+        ]
+      },
+      "safe-green-soft": {
+        "role": "secondary",
+        "displayName": "Washed Safe Green",
+        "canonical": "#e8f3ec",
+        "tonalRamp": [
+          "oklch(15% 0.035 151)",
+          "oklch(27% 0.035 151)",
+          "oklch(39% 0.035 151)",
+          "oklch(51% 0.035 151)",
+          "oklch(63% 0.035 151)",
+          "oklch(75% 0.035 151)",
+          "oklch(87% 0.035 151)",
+          "#e8f3ec"
+        ]
+      },
+      "conflict-red": {
+        "role": "tertiary",
+        "displayName": "Conflict Red Ink",
+        "canonical": "#a43a32",
+        "tonalRamp": [
+          "oklch(15% 0.13 28)",
+          "oklch(27% 0.13 28)",
+          "#a43a32",
+          "oklch(51% 0.13 28)",
+          "oklch(63% 0.12 28)",
+          "oklch(75% 0.09 28)",
+          "oklch(87% 0.05 28)",
+          "oklch(95% 0.025 28)"
+        ]
+      },
+      "conflict-red-soft": {
+        "role": "tertiary",
+        "displayName": "Washed Conflict Red",
+        "canonical": "#f9e9e6",
+        "tonalRamp": [
+          "oklch(15% 0.035 28)",
+          "oklch(27% 0.035 28)",
+          "oklch(39% 0.035 28)",
+          "oklch(51% 0.035 28)",
+          "oklch(63% 0.035 28)",
+          "oklch(75% 0.035 28)",
+          "oklch(87% 0.035 28)",
+          "#f9e9e6"
+        ]
+      },
+      "brand-navy": {
+        "role": "secondary",
+        "displayName": "Binder's Navy",
+        "canonical": "#233b64",
+        "tonalRamp": [
+          "oklch(15% 0.075 258)",
+          "#233b64",
+          "oklch(39% 0.075 258)",
+          "oklch(51% 0.075 258)",
+          "oklch(63% 0.075 258)",
+          "oklch(75% 0.06 258)",
+          "oklch(87% 0.04 258)",
+          "oklch(95% 0.02 258)"
+        ]
+      },
+      "focus-blue": {
+        "role": "primary",
+        "displayName": "Focus Blue",
+        "canonical": "#9bb4ff",
+        "tonalRamp": [
+          "oklch(15% 0.1 264)",
+          "oklch(27% 0.1 264)",
+          "oklch(39% 0.1 264)",
+          "oklch(51% 0.1 264)",
+          "oklch(63% 0.1 264)",
+          "#9bb4ff",
+          "oklch(87% 0.07 264)",
+          "oklch(95% 0.035 264)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Welcome Display",
+        "purpose": "The centered welcome promise only."
+      },
+      "headline": {
+        "displayName": "Editorial Headline",
+        "purpose": "Empty states and document-opening prompts."
+      },
+      "title": {
+        "displayName": "Colophon Title",
+        "purpose": "Small headings in the security margin."
+      },
+      "body": {
+        "displayName": "Operational Body",
+        "purpose": "Controls, notices, metadata, and guidance."
+      },
+      "preview-code": {
+        "displayName": "Code Preview",
+        "purpose": "Read-only plain-text and code previews."
+      },
+      "preview-editorial": {
+        "displayName": "Editorial Preview",
+        "purpose": "Extracted Word content and editorial reading surfaces."
+      },
+      "label": {
+        "displayName": "Registry Label",
+        "purpose": "Uppercase section labels in the side fields."
+      }
+    },
+    "shadows": [
+      {
+        "name": "bound-folio",
+        "value": "10px 12px 30px rgba(66, 52, 31, 0.1)",
+        "purpose": "The welcome-page book silhouette."
+      },
+      {
+        "name": "paper-leaf",
+        "value": "6px 8px 20px rgba(50, 40, 25, 0.08)",
+        "purpose": "The empty preview's page cue."
+      },
+      {
+        "name": "brand-seal",
+        "value": "0 12px 28px rgba(35, 59, 100, 0.22)",
+        "purpose": "The startup book mark."
+      },
+      {
+        "name": "action-lift",
+        "value": "0 5px 16px rgba(29, 78, 216, 0.2)",
+        "purpose": "The enabled primary action only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-ease",
+        "value": "160ms ease-out",
+        "purpose": "Button, border, transform, and registry-chevron state changes."
+      },
+      {
+        "name": "loading-rule",
+        "value": "1.2s ease-in-out infinite",
+        "purpose": "The startup annotation rule."
+      },
+      {
+        "name": "skeleton",
+        "value": "1.3s linear infinite",
+        "purpose": "Paper-toned loading skeletons."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms; 1 iteration",
+        "purpose": "Applied to all animation and transition under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [{ "name": "compact-workbench", "value": "1120px" }]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The singular high-emphasis action for choosing an authorized folder or retrying startup.",
+      "html": "<button class=\"ds-btn-primary\">Choisir un dossier</button>",
+      "css": ".ds-btn-primary { min-height: 42px; padding: 0 17px; border: 1px solid transparent; border-radius: 9px; background: var(--blue, #1d4ed8); color: #fff; font: 650 13px Inter, ui-sans-serif, sans-serif; cursor: pointer; box-shadow: 0 5px 16px rgba(29, 78, 216, .2); transition: background 160ms ease-out, transform 160ms ease-out; } .ds-btn-primary:hover { background: #1742ba; transform: translateY(-1px); } .ds-btn-primary:active { transform: translateY(0); } .ds-btn-primary:focus-visible { outline: 3px solid #9bb4ff; outline-offset: 2px; } .ds-btn-primary:disabled { background: #aeb5c8; box-shadow: none; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A restrained paper control for folder changes and recovery actions.",
+      "html": "<button class=\"ds-btn-secondary\">Choisir un autre dossier</button>",
+      "css": ".ds-btn-secondary { min-height: 42px; padding: 0 17px; border: 1px solid #c9c1b4; border-radius: 9px; background: rgba(255,255,255,.55); color: var(--ink, #1d211f); font: 600 13px Inter, ui-sans-serif, sans-serif; cursor: pointer; transition: background 160ms ease-out, border-color 160ms ease-out; } .ds-btn-secondary:hover { background: #fff; border-color: #9d9589; } .ds-btn-secondary:focus-visible { outline: 3px solid #9bb4ff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Workspace Select",
+      "kind": "input",
+      "refersTo": "workspace-select",
+      "description": "The authorized-workspace selector in the registry.",
+      "html": "<select class=\"ds-workspace-select\"><option>Archives locales</option></select>",
+      "css": ".ds-workspace-select { width: 230px; height: 42px; padding: 0 34px 0 12px; border: 1px solid #c9c1b4; border-radius: 9px; background: rgba(255,255,255,.7); color: var(--ink, #1d211f); font: 650 13px Inter, ui-sans-serif, sans-serif; } .ds-workspace-select:hover { background: #fff; } .ds-workspace-select:focus-visible { outline: 3px solid #9bb4ff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Selected Registry Item",
+      "kind": "nav",
+      "refersTo": "registry-item-selected",
+      "description": "The active document row in the left-hand file registry.",
+      "html": "<button class=\"ds-registry-item\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M7 3h7l4 4v14H7Zm7 0v5h4\"/></svg><span>notes.md</span></button>",
+      "css": ".ds-registry-item { width: 230px; min-height: 34px; display: flex; align-items: center; gap: 7px; padding: 5px 9px; border: 0; border-radius: 7px; background: #dfe7fb; color: #153caa; font: 650 13px Inter, ui-sans-serif, sans-serif; text-align: left; cursor: pointer; } .ds-registry-item svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; } .ds-registry-item:hover { background: #d4dff8; } .ds-registry-item:focus-visible { outline: 3px solid #9bb4ff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Document Toolbar",
+      "kind": "custom",
+      "description": "The active document name with its format and size in tabular numerals.",
+      "html": "<div class=\"ds-toolbar\"><strong>notes.md</strong><div><span>Texte</span>2,4 Ko</div></div>",
+      "css": ".ds-toolbar { height: 58px; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 0 28px; border-bottom: 1px solid var(--rule-soft, #e9e3d8); background: var(--paper, #fffefa); color: var(--ink, #1d211f); font: 13px Inter, ui-sans-serif, sans-serif; } .ds-toolbar > strong { font-weight: 700; } .ds-toolbar > div { display: flex; align-items: center; gap: 10px; color: var(--muted, #686b66); font-size: 12px; font-variant-numeric: tabular-nums; } .ds-toolbar span { padding: 4px 7px; border: 1px solid #c8d2ed; border-radius: 6px; background: #f2f5fd; color: #284d9d; font-size: 10px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }"
+    },
+    {
+      "name": "Text Preview",
+      "kind": "custom",
+      "refersTo": "text-preview",
+      "description": "The borderless, selectable, read-only document leaf for plain text and code.",
+      "html": "<pre class=\"ds-text-preview\"># Notes de travail\n\nLe document reste au centre.</pre>",
+      "css": ".ds-text-preview { width: 520px; height: 250px; margin: 0; overflow: auto; padding: 46px clamp(36px, 7vw, 96px) 80px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper, #fffefa); color: #262824; font: 15px/1.72 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; tab-size: 2; }"
+    },
+    {
+      "name": "Error Notice",
+      "kind": "card",
+      "refersTo": "notice-error",
+      "description": "A visible preview failure or file-limit message.",
+      "html": "<div class=\"ds-notice-error\" role=\"status\">Impossible de prévisualiser ce fichier.</div>",
+      "css": ".ds-notice-error { max-width: 520px; padding: 10px 13px; border-radius: 8px; background: var(--red-soft, #f9e9e6); color: #7c2924; font: 13px/1.45 Inter, ui-sans-serif, sans-serif; } .ds-notice-error:hover { background: #f6dfdb; } .ds-notice-error:focus-visible { outline: 3px solid #9bb4ff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Security Verification",
+      "kind": "custom",
+      "description": "The green local-processing assurance in the document information margin.",
+      "html": "<div class=\"ds-security-line\"><span><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m5 12 4 4L19 6\"/></svg></span><div><strong>Consulté localement</strong><p>DocSteward ne modifie pas le fichier et ne l’envoie à aucun service distant.</p></div></div>",
+      "css": ".ds-security-line { width: 250px; display: flex; gap: 11px; color: var(--muted, #686b66); font-family: Inter, ui-sans-serif, sans-serif; } .ds-security-line > span { width: 24px; height: 24px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: var(--green, #27794c); color: #fff; } .ds-security-line svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; } .ds-security-line strong { display: block; color: var(--green, #27794c); font-size: 12px; } .ds-security-line p { margin: 6px 0 0; font-size: 11px; line-height: 1.5; } .ds-security-line:hover strong { color: #1c603b; } .ds-security-line:focus-visible { outline: 3px solid #9bb4ff; outline-offset: 2px; }"
+    },
+    {
+      "name": "View Switcher",
+      "kind": "nav",
+      "description": "The compact registry control that moves between document reading and the opt-in questions-and-indicators view.",
+      "html": "<nav class=\"ds-view-switcher\" aria-label=\"Vue principale\"><button>Documents</button><button class=\"active\">Questions &amp; indicateurs</button></nav>",
+      "css": ".ds-view-switcher { width: 250px; display: grid; gap: 3px; padding: 4px; border: 1px solid var(--rule, #d8d1c3); border-radius: 9px; background: rgba(255,255,255,.48); } .ds-view-switcher button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink, #1d211f); font: 650 12px Inter, ui-sans-serif, sans-serif; text-align: left; cursor: pointer; } .ds-view-switcher button:hover { background: rgba(255,255,255,.65); } .ds-view-switcher button.active { background: #dfe7fb; color: #153caa; } .ds-view-switcher button:focus-visible { outline: 3px solid #9bb4ff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Indicator Record",
+      "kind": "card",
+      "description": "A ruled saved-value record with freshness, last-success context, sources, refresh, and confirmed removal.",
+      "html": "<article class=\"ds-indicator\"><header><span>À jour</span><button>Supprimer</button></header><h3>Chiffre d’affaires total</h3><strong>22 000,00 €</strong><p>Actualisé aujourd’hui à 09:42</p><footer><button class=\"sources\">Sources · 1</button><button class=\"refresh\">Actualiser</button></footer></article>",
+      "css": ".ds-indicator { width: 520px; padding: 20px; border: 1px solid var(--rule, #d8d1c3); background: var(--paper, #fffefa); color: var(--ink, #1d211f); font-family: Inter, ui-sans-serif, sans-serif; } .ds-indicator header, .ds-indicator footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; } .ds-indicator header span { color: var(--green, #27794c); font-size: 10px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; } .ds-indicator header button { min-height: 34px; padding: 0 8px; border: 0; background: transparent; color: var(--muted, #686b66); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; } .ds-indicator h3 { margin: 14px 0 9px; font: 600 16px/1.3 Georgia, 'Times New Roman', serif; } .ds-indicator > strong { display: block; overflow: hidden; color: var(--ink, #1d211f); font-size: 34px; font-variant-numeric: tabular-nums; letter-spacing: -.03em; text-overflow: ellipsis; white-space: nowrap; } .ds-indicator > p { margin: 8px 0 16px; color: var(--muted, #686b66); font-size: 11px; } .ds-indicator footer button { min-height: 34px; cursor: pointer; } .ds-indicator .sources { border: 0; background: transparent; color: #284d9d; font-weight: 700; } .ds-indicator .refresh { padding: 0 11px; border: 1px solid #c9c1b4; border-radius: 7px; background: rgba(255,255,255,.6); font-weight: 650; } .ds-indicator button:focus-visible { outline: 3px solid #9bb4ff; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Working Colophon",
+    "overview": "DocSteward is a contemporary bookbinding and colophon library: warm paper, dark ink, fine rules, and carefully placed annotations make local document consultation feel tended rather than administered. The interface is compact and editorial, but never precious. Its hierarchy serves the document first and makes read-only privacy legible at the margin.\n\nThe desktop composition behaves like an open volume with reference apparatus around it: a registry at left, the dominant document or inquiry surface in the center, and an information colophon at right. The opt-in questions-and-indicators view is another reading mode within that hierarchy, not a dashboard detached from the library. Blue is the librarian's pencil; green and red report verified system states. Controls remain recognizably desktop-native, while serif display moments and asymmetric paper silhouettes carry the identity.",
+    "keyCharacteristics": [
+      "Warm paper and canvas surfaces separated by hairline binding rules.",
+      "A three-part registry, document, and security-margin composition.",
+      "Georgia for editorial voice; Inter and system sans for operation; system mono for code-like text.",
+      "Annotation blue used sparingly for actions, selection, focus, active tabs, and loading state.",
+      "Opt-in document inquiry presented as cited reading, with privacy disclosure kept adjacent to the activity.",
+      "Compact behavior preserves the active reading or inquiry surface before secondary metadata."
+    ],
+    "rules": [
+      {
+        "name": "The Annotator's Pencil Rule",
+        "body": "Blue marks what can be acted on, selected, focused, or actively viewed; it does not wash entire regions for atmosphere.",
+        "section": "colors"
+      },
+      {
+        "name": "The Semantic Ink Rule",
+        "body": "Green and red appear only when they communicate system truth.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Voices Rule",
+        "body": "Serif carries document culture; sans carries interface operation. Do not set dense controls or file trees in serif.",
+        "section": "typography"
+      },
+      {
+        "name": "The Document Wins Rule",
+        "body": "When width is constrained, metadata yields before the registry and active reading surface; the document or inquiry remains dominant.",
+        "section": "layout"
+      },
+      {
+        "name": "The Bound-Not-Floating Rule",
+        "body": "Use rules and surface tone for application structure; reserve shadow for physical paper cues and the singular primary action.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve the registry–document–security hierarchy whenever width permits.",
+      "Do move essential actions with their content when a secondary panel is hidden.",
+      "Do use annotation blue for active, focused, or selected states.",
+      "Do use Georgia selectively for the bookish voice and Inter/system sans for dense operation.",
+      "Do keep focus visible and honor reduced-motion preferences.",
+      "Do express document safety as understandable state, not as decorative security theater.",
+      "Do disclose OpenAI excerpt transmission before activation and keep that disclosure visible anywhere the questions view remains available.",
+      "Do preserve citations and the last reliable value as the trust anchors for answers and indicators."
+    ],
+    "donts": [
+      "Don't turn the preview into a floating card or reduce the document to a dashboard tile.",
+      "Don't introduce cool white chrome, neon accents, gradients, glass effects, or heavy drop shadows.",
+      "Don't use green or red without a real success, safety, error, or conflict meaning.",
+      "Don't introduce editing, creation, save, or destructive affordances anywhere in the document flow.",
+      "Don't present assisted search as implicit, fully local, or available without per-space consent.",
+      "Don't turn questions and indicators into an unrelated analytics dashboard; keep them within the registry–reading–security hierarchy.",
+      "Don't use a tiny text link as the only destructive target; deletion remains confirmed, explicit, and comfortably operable.",
+      "Don't over-round every region; rules and spacing are the primary structure."
+    ]
+  }
+}

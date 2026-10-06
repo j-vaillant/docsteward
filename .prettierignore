@@ -1,0 +1,7 @@
+node_modules
+.vite
+out
+coverage
+playwright-report
+package-lock.json
+*.png

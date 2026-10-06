@@ -1,0 +1,13 @@
+node_modules/
+.vite/
+out/
+build/
+coverage/
+playwright-report/
+test-results/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.impeccable/review/*.png
