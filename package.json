@@ -2,6 +2,8 @@
   "name": "docsteward",
   "version": "0.1.0",
   "private": true,
+  "productName": "DocSteward",
+  "author": "IndependentWeb",
   "description": "Prévisualisation desktop locale et sécurisée de documents",
   "main": ".vite/build/main.js",
   "workspaces": [
@@ -22,7 +24,11 @@
     "test:integration": "vitest run tests/integration",
     "test:e2e": "npm run build && playwright test",
     "package": "npm run build:server && npm run build:renderer && electron-forge package",
-    "make": "npm run build:server && npm run build:renderer && electron-forge make"
+    "make": "npm run build:server && npm run build:renderer && electron-forge make",
+    "make:prod": "node scripts/make-production.mts",
+    "make:prod:patch": "cross-env RELEASE_TYPE=patch npm run make:prod",
+    "make:prod:minor": "cross-env RELEASE_TYPE=minor npm run make:prod",
+    "make:prod:major": "cross-env RELEASE_TYPE=major npm run make:prod"
   },
   "dependencies": {
     "@llamaindex/liteparse": "2.15.1",
@@ -48,6 +54,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
+    "cross-env": "^10.1.0",
     "electron": "44.5.1",
     "eslint": "9.39.1",
     "eslint-plugin-react-hooks": "7.0.1",

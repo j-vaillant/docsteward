@@ -4,16 +4,30 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 
+const appIcon = process.platform === 'win32' ? 'assets/icon.ico' : 'assets/icon.icns';
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     name: 'DocSteward',
-    executableName: 'docsteward',
+    appBundleId: 'fr.independentweb.docsteward',
+    appCategoryType: 'public.app-category.productivity',
+    executableName: 'DocSteward',
+    icon: appIcon,
+    extendInfo: {
+      CFBundleDisplayName: 'DocSteward',
+      CFBundleName: 'DocSteward',
+      CFBundleIconFile: 'DocSteward.icns',
+    },
     extraResource: ['build/server'],
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({ name: 'docsteward', setupExe: 'DocSteward-Setup.exe' }),
+    new MakerSquirrel({
+      name: 'docsteward',
+      setupExe: 'DocSteward-Setup.exe',
+      setupIcon: 'assets/icon.ico',
+    }),
     new MakerDMG({ name: 'DocSteward' }, ['darwin']),
     new MakerZIP({}, ['darwin']),
   ],

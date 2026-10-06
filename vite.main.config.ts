@@ -5,6 +5,7 @@ export default defineConfig({
   define: {
     __DOCSTEWARD_API_URL__: JSON.stringify(process.env.DOCSTEWARD_API_URL ?? ''),
   },
+  ssr: { noExternal: true },
   build: {
     outDir: '.vite/build',
     emptyOutDir: false,
