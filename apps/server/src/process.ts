@@ -1,10 +1,15 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { MainToServerMessageSchema, PROTOCOL_VERSION } from '@docsteward/contracts';
 import { createServer } from './app';
 import { createSafeLogger, type SafeLogger } from './logger';
 import type { RagProvider } from './rag';
 import { OpenAISorterProvider, type SorterProvider } from './sorter';
+
+// Use the OS trust store for the HTTPS proxy, as Electron does for login.
+// Keep the bundled roots and certificate verification enabled.
+setDefaultCACertificates([...getCACertificates('default'), ...getCACertificates('system')]);
 
 const deterministicRagProvider: RagProvider | undefined =
   process.env.NODE_ENV === 'test' && process.env.DOCSTEWARD_E2E_RAG
