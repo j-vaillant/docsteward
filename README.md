@@ -29,6 +29,8 @@ d’environnement présente au lancement reste prioritaire.
 
 Au premier lancement, connectez-vous avec un compte DocSteward activé, puis choisissez un dossier avec le dialogue natif. Les extensions prises en charge sont `.txt`, `.md`, `.json`, `.yaml`, `.yml`, `.js`, `.jsx`, `.ts`, `.tsx`, `.css` et `.html`, dans la limite de 5 Mio par fichier.
 
+La connexion est conservée entre les lancements grâce au chiffrement système d’Electron. Le mot de passe n’est jamais enregistré. La déconnexion efface la session sauvegardée ; un JWT expiré ou un changement de service demande une nouvelle connexion. Si le chiffrement système est indisponible, la connexion reste limitée au lancement en cours.
+
 ## Contrôles
 
 ```bash

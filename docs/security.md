@@ -24,6 +24,8 @@ Les journaux ne contiennent ni secret, ni contenu, ni chemin absolu. Une rotatio
 
 `DOCSTEWARD_API_URL` est une URL publique et ne contient aucun secret. Le processus principal Electron y échange les identifiants contre un JWT dédié à DocSteward. Ni le JWT ni les identifiants ne sont exposés au renderer. La clé OpenAI reste chiffrée côté `independentweb-api` ; seuls les extraits nécessaires aux fonctions IA transitent par IndependentWeb puis OpenAI.
 
+Le jeton et les informations du compte sont conservés dans `auth-session.enc`, sous `userData`, chiffrés par `safeStorage` (DPAPI sous Windows, trousseau système sous macOS). Aucun mot de passe n’est sauvegardé. Le processus principal restaure la session avant de démarrer le serveur local, vérifie l’URL du service et l’expiration du JWT, puis recharge les dossiers du compte. Un fichier invalide ou une session expirée est supprimé ; la déconnexion supprime également ce fichier. Aucun renouvellement de jeton n’est effectué : les appels distants restent soumis à la validation du service.
+
 ## Limites connues
 
 Le modèle protège l’application contre un site local ou distant opportuniste, pas contre un autre processus déjà capable de lire la mémoire du compte utilisateur. La robustesse de `rename` lors du remplacement d’un fichier existant dépend des garanties du système de fichiers hôte.

@@ -8,6 +8,8 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  net,
+  safeStorage,
   session,
   shell,
   utilityProcess,
@@ -30,6 +32,7 @@ import {
   type WorkspaceSummary,
 } from '@docsteward/contracts';
 import { scheduleAutoUpdateCheck } from './auto-update.js';
+import { createAuthSessionStore } from './auth-session.js';
 
 declare const __DOCSTEWARD_API_URL__: string;
 
@@ -106,6 +109,18 @@ function authState(): AuthState {
     : { authenticated: false };
 }
 
+function authSessionStore() {
+  return createAuthSessionStore(join(app.getPath('userData'), 'auth-session.enc'), safeStorage);
+}
+
+async function restoreAuthSession(): Promise<void> {
+  const saved = await authSessionStore().load(docStewardApiUrl());
+  if (!saved) return;
+  settings = await loadSettings(saved.account.id);
+  accessToken = saved.accessToken;
+  authenticatedAccount = saved.account;
+}
+
 function docStewardApiUrl(): string {
   const configured = (process.env.DOCSTEWARD_API_URL || __DOCSTEWARD_API_URL__)
     .trim()
@@ -135,7 +150,7 @@ type LoginResponse = {
 async function authenticateRemotely(email: string, password: string): Promise<void> {
   let response: Response;
   try {
-    response = await fetch(`${docStewardApiUrl()}/auth/login`, {
+    response = await net.fetch(`${docStewardApiUrl()}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -152,6 +167,13 @@ async function authenticateRemotely(email: string, password: string): Promise<vo
     if (response.status === 401) throw new Error('Adresse e-mail ou mot de passe incorrect.');
     throw new Error(payload.error?.message ?? 'La connexion a échoué.');
   }
+  const persisted = await authSessionStore().save({
+    schemaVersion: 1,
+    apiUrl: docStewardApiUrl(),
+    accessToken: payload.data.accessToken,
+    account: payload.data.account,
+  });
+  if (!persisted) console.warn('Chiffrement système indisponible : session non persistée.');
   accessToken = payload.data.accessToken;
   authenticatedAccount = payload.data.account;
   settings = await loadSettings(payload.data.account.id);
@@ -268,6 +290,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('docsteward:logout', async (event) => {
     if (!isTrustedFrame(event)) throw new Error('Origine IPC non autorisée');
+    await authSessionStore().clear();
     authenticatedAccount = undefined;
     accessToken = undefined;
     settings = { schemaVersion: 1, workspaces: [] };
@@ -489,6 +512,8 @@ if (hasLock) {
             ],
           };
         }
+      } else {
+        await restoreAuthSession();
       }
       appSession = session.fromPartition(`docsteward-${randomUUID()}`, { cache: false });
       registerIpc();
