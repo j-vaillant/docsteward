@@ -12,8 +12,12 @@ import type {
 } from '@docsteward/contracts';
 import { ApiError, api } from './api';
 import brandMarkUrl from './assets/docsteward-mark.svg';
+import changelogMarkdown from '../../../changelog.md?raw';
+import { parseChangelog } from './changelog';
 import { formatIndicatorValue } from './format';
 import { SorterPanel } from './SorterPanel';
+
+const changelogReleases = parseChangelog(changelogMarkdown);
 
 function fileExtension(name: string): string {
   const index = name.lastIndexOf('.');
@@ -404,6 +408,77 @@ function PinIndicatorDialog({
           </button>
         </footer>
       </form>
+    </dialog>
+  );
+}
+
+function VersionHistoryDialog({
+  appVersion,
+  onClose,
+}: {
+  appVersion: string;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="version-dialog"
+      aria-labelledby="version-dialog-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="version-dialog-content">
+        <header>
+          <div>
+            <h2 id="version-dialog-title">Historique des versions</h2>
+            <p>Les évolutions livrées avec DocSteward.</p>
+          </div>
+          <button type="button" className="dialog-close" onClick={onClose} aria-label="Fermer">
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="release-list">
+          {changelogReleases.length ? (
+            changelogReleases.map((release) => (
+              <article className="release-entry" key={`${release.version}-${release.date}`}>
+                <div className="release-heading">
+                  <h3>Version {release.version}</h3>
+                  {release.version === appVersion ? <span>Version actuelle</span> : null}
+                  <time dateTime={release.date}>
+                    {new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long' }).format(
+                      new Date(`${release.date}T12:00:00`),
+                    )}
+                  </time>
+                </div>
+                {release.notes.length ? (
+                  <ul>
+                    {release.notes.map((note, index) => (
+                      <li key={`${release.version}-${index}`}>{note}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="release-empty">Aucune note publiée pour cette version.</p>
+                )}
+              </article>
+            ))
+          ) : (
+            <p className="release-empty">Aucun historique de version n’est encore disponible.</p>
+          )}
+        </div>
+      </section>
     </dialog>
   );
 }
@@ -1037,6 +1112,7 @@ export function App() {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'error' | 'info'; text: string } | null>(null);
   const [appVersion, setAppVersion] = useState('');
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [view, setView] = useState<'document' | 'workspace'>('workspace');
   const [workspaceSection, setWorkspaceSection] = useState<
     'dashboard' | 'questions' | 'sorter' | 'configuration'
@@ -1290,8 +1366,18 @@ export function App() {
           <BrandMark />
           <span>DocSteward</span>
         </div>
-        <div className="server-status">
-          <i /> Serveur prêt
+        <div className="server-status-row">
+          <div className="server-status">
+            <i /> Serveur prêt
+          </div>
+          <button
+            type="button"
+            className="version-button"
+            onClick={() => setVersionHistoryOpen(true)}
+            aria-label={`Voir l’historique des versions, version actuelle ${appVersion}`}
+          >
+            v{appVersion}
+          </button>
         </div>
         <div className="workspace-heading">Bibliothèque locale</div>
         <label className="workspace-select">
@@ -1328,6 +1414,12 @@ export function App() {
           <button onClick={() => window.docSteward.openLogsDirectory()}>Journaux</button>
         </div>
       </aside>
+      {versionHistoryOpen ? (
+        <VersionHistoryDialog
+          appVersion={appVersion}
+          onClose={() => setVersionHistoryOpen(false)}
+        />
+      ) : null}
       <section className="primary-surface">
         {notice && view !== 'document' ? (
           <div className={`notice app-notice ${notice.tone}`} role="status">

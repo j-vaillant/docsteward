@@ -46,4 +46,12 @@ La configuration Forge inclut DMG et ZIP. Apple Silicon est l’architecture nat
 
 Squirrel.Windows produit `DocSteward-Setup.exe`. Le bundle et l'installateur utilisent `assets/icon.ico`, tandis que macOS utilise `assets/icon.icns`. Une distribution publique demande un certificat Authenticode. Un MSI d’entreprise est hors périmètre du MVP et pourra être ajouté avec un maker WiX dédié.
 
-Le serveur compilé et les assets du renderer sont copiés dans les ressources de l’application. Aucun code exécutable n’est téléchargé au premier lancement.
+Le serveur compilé et les assets du renderer sont copiés dans les ressources de l’application. Les seuls binaires téléchargés ensuite sont les packages de mise à jour publiés par IndependentWeb.
+
+## Mise à jour automatique
+
+Au démarrage d’une application installée, DocSteward interroge l’endpoint public `GET /docsteward/builds`. Si un artefact plus récent de type `package` existe pour la plateforme courante, une boîte de dialogue native propose la mise à jour. Après validation, le package est téléchargé en arrière-plan, vérifié par sa taille, puis installé par `autoUpdater` au moyen de Squirrel. L’application redémarre automatiquement lorsque la mise à jour est prête.
+
+Publiez le ZIP produit par le maker Forge comme package macOS et le fichier `*-full.nupkg` comme package Windows. Les DMG et `Setup.exe` restent les installateurs présentés sur le site vitrine.
+
+L’auto-update macOS impose une application signée, conformément aux exigences de Squirrel.Mac. Windows doit avoir été installé avec `DocSteward-Setup.exe` afin que `Update.exe` et le mécanisme Squirrel soient disponibles.

@@ -13,6 +13,7 @@ import {
   type Session,
   type UtilityProcess,
 } from 'electron';
+import squirrelStartup from 'electron-squirrel-startup';
 import {
   PROTOCOL_VERSION,
   RagModelsSchema,
@@ -27,6 +28,7 @@ import {
   type WorkspaceRecord,
   type WorkspaceSummary,
 } from '@docsteward/contracts';
+import { scheduleAutoUpdateCheck } from './auto-update.js';
 
 declare const __DOCSTEWARD_API_URL__: string;
 
@@ -78,7 +80,13 @@ if (!app.isPackaged && process.env.NODE_ENV === 'test' && process.env.DOCSTEWARD
   app.setPath('userData', process.env.DOCSTEWARD_E2E_USER_DATA);
 }
 
-const hasLock = app.requestSingleInstanceLock();
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.squirrel.docsteward.DocSteward');
+}
+
+if (squirrelStartup) app.quit();
+
+const hasLock = !squirrelStartup && app.requestSingleInstanceLock();
 if (!hasLock) app.quit();
 
 function accountDataPath(accountId?: string): string {
@@ -485,6 +493,11 @@ if (hasLock) {
       await startServer().catch(async (error: unknown) => {
         const typed = error as Error & { correlationId?: string };
         await showServerError(typed.message, typed.correlationId);
+      });
+      scheduleAutoUpdateCheck({
+        apiUrl: docStewardApiUrl,
+        getWindow: () => mainWindow,
+        beforeInstall: stopServer,
       });
     })
     .catch(async (error: unknown) => {

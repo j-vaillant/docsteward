@@ -64,6 +64,24 @@ test('prévisualise un document local sans permettre sa modification', async () 
   try {
     const page = await electronApp.firstWindow();
     await expect(page.getByText('Serveur prêt')).toBeVisible();
+    await page.getByRole('button', { name: /Voir l’historique des versions/ }).click();
+    await expect(page.getByRole('dialog', { name: 'Historique des versions' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Version 1.0.0' })).toBeVisible();
+    await expect(page.getByText("version MVP de l'application")).toBeVisible();
+    const releaseWindow = await electronApp.browserWindow(page);
+    await releaseWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(1360, 860),
+    );
+    await page.screenshot({ path: '.impeccable/review/version-history-desktop.png' });
+    await releaseWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(940, 700),
+    );
+    await page.screenshot({ path: '.impeccable/review/version-history-compact.png' });
+    await releaseWindow.evaluate((window: { setSize(width: number, height: number): void }) =>
+      window.setSize(1360, 860),
+    );
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Historique des versions' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Compte de e2e@docsteward.local' }).click();
     await expect(page.getByText('e2e@docsteward.local')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Se déconnecter' })).toBeVisible();
