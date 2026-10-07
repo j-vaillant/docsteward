@@ -13,6 +13,8 @@ import { OpenAIEmbedding } from '@llamaindex/openai';
 import {
   IndicatorSchema,
   RagAnswerSchema,
+  RagFieldSchema,
+  RagCitationSchema,
   CreateIndicatorRequestSchema,
   type Indicator,
   type RagAnswer,
@@ -22,7 +24,7 @@ import {
   type WorkspaceRecord,
 } from '@docsteward/contracts';
 import { listDirectory, readPreviewFile } from '@docsteward/filesystem-policy';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { SafeLogger } from './logger';
 import { extractTextParts } from './document-text';
 
@@ -195,6 +197,26 @@ export function publicMessage(error: unknown): RagError {
   return new RagError('RAG_QUERY_FAILED', 'La recherche documentaire a échoué. Réessayez.', 500);
 }
 
+// Structured Outputs represents absent metadata as null. Keep the public
+// application contract optional by normalizing it at the provider boundary.
+const ProviderAnswerSchema = RagAnswerSchema.extend({
+  fields: z
+    .array(
+      RagFieldSchema.extend({
+        unit: RagFieldSchema.shape.unit.nullable().transform((value) => value ?? undefined),
+      }),
+    )
+    .max(25),
+  citations: z
+    .array(
+      RagCitationSchema.extend({
+        page: RagCitationSchema.shape.page.nullable().transform((value) => value ?? undefined),
+        sheet: RagCitationSchema.shape.sheet.nullable().transform((value) => value ?? undefined),
+      }),
+    )
+    .max(20),
+});
+
 function answerJsonSchema(refreshTarget?: IndicatorRefreshTarget) {
   return {
     type: 'object',
@@ -207,7 +229,7 @@ function answerJsonSchema(refreshTarget?: IndicatorRefreshTarget) {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['key', 'label', 'type', 'value', 'citationIds'],
+          required: ['key', 'label', 'type', 'value', 'unit', 'citationIds'],
           properties: {
             key: refreshTarget ? { type: 'string', enum: [refreshTarget.key] } : { type: 'string' },
             label: { type: 'string' },
@@ -218,7 +240,7 @@ function answerJsonSchema(refreshTarget?: IndicatorRefreshTarget) {
                   enum: ['number', 'currency', 'percentage', 'text', 'date'],
                 },
             value: { anyOf: [{ type: 'string' }, { type: 'number' }] },
-            unit: { type: 'string' },
+            unit: { type: ['string', 'null'] },
             citationIds: { type: 'array', minItems: 1, items: { type: 'string' } },
           },
         },
@@ -228,14 +250,14 @@ function answerJsonSchema(refreshTarget?: IndicatorRefreshTarget) {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['id', 'documentPath', 'documentName', 'excerpt'],
+          required: ['id', 'documentPath', 'documentName', 'excerpt', 'page', 'sheet'],
           properties: {
             id: { type: 'string' },
             documentPath: { type: 'string' },
             documentName: { type: 'string' },
             excerpt: { type: 'string' },
-            page: { type: 'integer' },
-            sheet: { type: 'string' },
+            page: { type: ['integer', 'null'] },
+            sheet: { type: ['string', 'null'] },
           },
         },
       },
@@ -268,6 +290,7 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
     apiKey: string,
     private readonly configuration: RagConfiguration,
     baseURL?: string,
+    private readonly logger?: SafeLogger,
   ) {
     this.client = new OpenAI({ apiKey, baseURL, timeout: 45_000, maxRetries: 1 });
     this.embedding = new OpenAIEmbedding({
@@ -353,6 +376,7 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
     question: string,
     refreshTarget?: IndicatorRefreshTarget,
   ): Promise<RagAnswer> {
+    let stage = 'loading';
     try {
       let index = this.indexes.get(persistDir);
       if (!index) {
@@ -360,8 +384,10 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
           const storageContext = await storageContextFromDefaults({ persistDir });
           return VectorStoreIndex.init({ storageContext });
         });
+        this.indexes.clear();
         this.indexes.set(persistDir, index);
       }
+      stage = 'retrieval';
       const nodes = await index
         .asRetriever({ similarityTopK: this.configuration.similarityTopK })
         .retrieve(question);
@@ -392,6 +418,7 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
         )
         .join('\n\n')
         .slice(0, MAX_CONTEXT_CHARACTERS);
+      stage = 'generation';
       const response = await this.client.responses.create({
         model: this.configuration.generationModel,
         store: false,
@@ -408,13 +435,30 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
           format: {
             type: 'json_schema',
             name: 'rag_answer',
-            strict: false,
+            strict: true,
             schema: answerJsonSchema(refreshTarget),
           },
         },
       });
-      const raw = JSON.parse(response.output_text) as unknown;
-      const parsed = RagAnswerSchema.parse(raw);
+      stage = 'validation';
+      let raw: unknown;
+      try {
+        raw = JSON.parse(response.output_text) as unknown;
+      } catch {
+        throw new RagError(
+          'RAG_INVALID_RESPONSE',
+          'Le service IA a renvoyé une réponse vide ou illisible. Relancez la recherche.',
+          502,
+        );
+      }
+      const result = ProviderAnswerSchema.safeParse(raw);
+      if (!result.success)
+        throw new RagError(
+          'RAG_INVALID_RESPONSE',
+          'Le service IA a renvoyé une réponse au format invalide. Relancez la recherche.',
+          502,
+        );
+      const parsed = result.data;
       const allowedIds = new Set(citations.map((citation) => citation.id));
       if (
         parsed.citations.some((citation) => !allowedIds.has(citation.id)) ||
@@ -435,6 +479,15 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
         })),
       };
     } catch (error) {
+      // API messages and validation values can contain source text or secrets.
+      // Log only the failed stage and SDK classification, never the message.
+      const diagnostic = errorDiagnostic(error);
+      delete diagnostic.diagnostic;
+      await this.logger?.error('rag.query.failed', {
+        stage,
+        ...diagnostic,
+        code: publicMessage(error).code,
+      });
       throw publicMessage(error);
     }
   }
