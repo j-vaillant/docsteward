@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
 
 export type ReleaseType = 'patch' | 'minor' | 'major';
 
@@ -160,8 +161,9 @@ export function prepareRelease(releaseType: ReleaseType): PreparedRelease {
   const tag = `v${version}`;
   assertTagIsAvailable(tag);
 
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  runOrThrow(npm, ['version', version, '--no-git-tag-version'], true);
+  const npmCli =
+    process.env.npm_execpath ?? join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
+  runOrThrow(process.execPath, [npmCli, 'version', version, '--no-git-tag-version'], true);
 
   let changelog: string | undefined;
   try {

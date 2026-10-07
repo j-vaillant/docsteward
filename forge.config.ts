@@ -27,6 +27,7 @@ const config: ForgeConfig = {
       name: 'docsteward',
       setupExe: 'DocSteward-Setup.exe',
       setupIcon: 'assets/icon.ico',
+      loadingGif: 'assets/installer-loading.gif',
     }),
     new MakerDMG({ name: 'DocSteward' }, ['darwin']),
     new MakerZIP({}, ['darwin']),

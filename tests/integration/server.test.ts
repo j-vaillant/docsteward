@@ -8,7 +8,7 @@ import { createServer } from '../../apps/server/src/app';
 import type { SafeLogger } from '../../apps/server/src/logger';
 import type { RagProvider, RagService } from '../../apps/server/src/rag';
 import type { SorterProvider } from '../../apps/server/src/sorter';
-import type { RagAnswer } from '@docsteward/contracts';
+import type { FileEntry, RagAnswer } from '@docsteward/contracts';
 
 const logger: SafeLogger = {
   info: () => Promise.resolve(),
@@ -107,6 +107,46 @@ afterEach(async () => {
 });
 
 describe('local server', () => {
+  it('charge la navigation sans lire les documents ni inventorier les sous-dossiers', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000001';
+    const nested = join(root, 'écrits');
+    await mkdir(nested);
+    await Promise.all(
+      Array.from({ length: 1_001 }, (_, index) =>
+        writeFile(join(nested, `${index}.pdf`), 'PDF volontairement invalide'),
+      ),
+    );
+    const active = await app.inject({
+      method: 'GET',
+      url: `/api/virtual-tree/active?workspaceId=${workspaceId}`,
+      headers: auth,
+    });
+    expect(active.json()).toEqual({ ok: true, data: null });
+    const rootListing = await app.inject({
+      method: 'GET',
+      url: `/api/fs/list?workspaceId=${workspaceId}`,
+      headers: auth,
+    });
+    expect(rootListing.json<{ data: FileEntry[] }>().data).toHaveLength(2);
+    expect(rootListing.json<{ data: FileEntry[] }>().data[0]).toMatchObject({
+      name: 'écrits',
+      type: 'directory',
+    });
+    const nestedListing = await app.inject({
+      method: 'GET',
+      url: `/api/fs/list?${new URLSearchParams({ workspaceId, path: 'écrits' })}`,
+      headers: auth,
+    });
+    expect(nestedListing.statusCode).toBe(200);
+    expect(nestedListing.json<{ data: FileEntry[] }>().data).toHaveLength(1_001);
+    const unknown = await app.inject({
+      method: 'GET',
+      url: '/api/virtual-tree/active?workspaceId=00000000-0000-4000-8000-000000000099',
+      headers: auth,
+    });
+    expect(unknown.statusCode).toBe(404);
+  });
+
   it('ne donne accès aux données locales qu’après authentification utilisateur', async () => {
     const locked = createServer({
       secret,
@@ -609,7 +649,7 @@ describe('local server', () => {
     try {
       const restored = await restarted.app.inject({
         method: 'GET',
-        url: `/api/virtual-tree?workspaceId=${workspaceId}`,
+        url: `/api/virtual-tree/active?workspaceId=${workspaceId}`,
         headers: auth,
       });
       expect(restored.json()).toMatchObject({

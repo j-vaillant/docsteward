@@ -7,6 +7,75 @@ import { _electron as electron, expect, test } from '@playwright/test';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const electronPath = require('electron') as string;
 
+test('ouvre le premier grand dossier sans lancer le classement et charge les enfants à la demande', async () => {
+  const temporary = await mkdtemp(join(tmpdir(), 'docsteward-large-e2e-'));
+  const workspace = join(temporary, 'écrits');
+  const nested = join(workspace, 'archives');
+  await mkdir(nested, { recursive: true });
+  await writeFile(join(workspace, 'bonjour.md'), '# Bonjour');
+  await Promise.all(
+    Array.from({ length: 1_001 }, (_, index) =>
+      writeFile(join(nested, `document-${index}.txt`), `Document ${index}`),
+    ),
+  );
+  const userData = await mkdtemp(join(tmpdir(), 'docsteward-large-profile-'));
+  const electronApp = await electron.launch({
+    executablePath: electronPath,
+    args: [resolve('.')],
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      DOCSTEWARD_E2E_USER_DATA: userData,
+      DOCSTEWARD_E2E_WORKSPACE: '',
+    },
+  });
+  try {
+    await electronApp.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = () => Promise.resolve({ canceled: false, filePaths: [selected] });
+    }, workspace);
+    const page = await electronApp.firstWindow();
+    const listings: string[] = [];
+    const inventories: string[] = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === '/api/fs/list') listings.push(url.searchParams.get('path') ?? '');
+      if (url.pathname === '/api/virtual-tree') inventories.push(url.href);
+    });
+    const selectedAt = Date.now();
+    await page.getByRole('button', { name: 'Choisir un dossier', exact: true }).click();
+    const tree = page.getByRole('tree', { name: 'Documents du dossier' });
+    await expect(tree.getByRole('button', { name: /bonjour.md/ })).toBeVisible();
+    console.log(`Premier listing visible en ${Date.now() - selectedAt} ms.`);
+    expect(listings).toEqual(['']);
+    expect(inventories).toEqual([]);
+    let failOnce = true;
+    await page.route('**/api/fs/list?*', async (route) => {
+      if (new URL(route.request().url()).searchParams.get('path') === 'archives' && failOnce) {
+        failOnce = false;
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ok: false,
+            error: { code: 'FS_IO_ERROR', message: 'Dossier temporairement indisponible.' },
+          }),
+        });
+      } else await route.continue();
+    });
+    await tree.getByRole('button', { name: 'archives', exact: true }).click();
+    await expect(tree.getByRole('alert')).toContainText('Dossier temporairement indisponible.');
+    await expect(tree.getByRole('status')).toHaveCount(0);
+    await tree.getByRole('button', { name: 'Réessayer', exact: true }).click();
+    await expect(tree.locator('button.tree-item')).toHaveCount(1_003);
+    expect(listings).toEqual(['', 'archives', 'archives']);
+    await tree.getByRole('button', { name: /bonjour.md/ }).click();
+    await expect(page.locator('.text-preview')).toBeVisible();
+    await expect(page.locator('.text-preview')).toContainText('# Bonjour');
+  } finally {
+    await electronApp.close();
+  }
+});
+
 test('exige une connexion avant d’afficher la bibliothèque', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'docsteward-login-e2e-profile-'));
   const electronApp = await electron.launch({

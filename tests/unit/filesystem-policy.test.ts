@@ -19,10 +19,9 @@ describe('filesystem policy', () => {
   );
 
   it('conserve les chemins relatifs sûrs dans la racine', () => {
+    const root = join(tmpdir(), 'workspace');
     expect(normalizeRelativePath('docs/notes.md')).toBe('docs/notes.md');
-    expect(resolveWithinRoot('/tmp/workspace', 'docs/notes.md')).toBe(
-      join('/tmp/workspace', 'docs/notes.md'),
-    );
+    expect(resolveWithinRoot(root, 'docs/notes.md')).toBe(join(root, 'docs/notes.md'));
   });
 
   it('calcule un SHA-256 stable', () => {
@@ -37,9 +36,10 @@ describe('filesystem policy', () => {
     await expect(readPreviewFile(root, 'photo.png')).rejects.toMatchObject({
       code: 'FILE_TYPE_NOT_ALLOWED',
     });
-    await writeFile(join(root, 'outside.pdf'), '%PDF-1.4');
-    await symlink(join(root, 'outside.pdf'), join(root, 'link.pdf'));
-    await expect(readPreviewFile(root, 'link.pdf')).rejects.toMatchObject({
+    const outside = await mkdtemp(join(tmpdir(), 'docsteward-outside-'));
+    await writeFile(join(outside, 'outside.pdf'), '%PDF-1.4');
+    await symlink(outside, join(root, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+    await expect(readPreviewFile(root, 'link/outside.pdf')).rejects.toMatchObject({
       code: 'SYMLINK_NOT_ALLOWED',
     });
   });

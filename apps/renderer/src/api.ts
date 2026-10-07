@@ -32,6 +32,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       headers,
     });
   } catch {
+    if (init?.signal?.aborted)
+      throw new ApiError('REQUEST_TIMEOUT', 'Le chargement a été interrompu. Réessayez.');
     throw new ApiError(
       'SERVER_UNAVAILABLE',
       'Le serveur local ne répond plus. Relancez DocSteward.',
@@ -47,10 +49,20 @@ export const api = {
   health: () =>
     request<{ status: 'ready'; version: string; apiSchemaVersion: number }>('/api/health'),
   workspaces: () => request<WorkspaceSummary[]>('/api/workspaces'),
-  list: (workspaceId: string, path = '') => {
+  list: (workspaceId: string, path = '', signal?: AbortSignal) => {
     const params = new URLSearchParams({ workspaceId, path });
-    return request<FileEntry[]>(`/api/fs/list?${params.toString()}`);
+    const timeout = AbortSignal.timeout(15_000);
+    return request<FileEntry[]>(`/api/fs/list?${params.toString()}`, {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
   },
+  activeVirtualTree: (workspaceId: string) =>
+    request<VirtualTree | null>(
+      `/api/virtual-tree/active?${new URLSearchParams({ workspaceId })}`,
+      {
+        signal: AbortSignal.timeout(15_000),
+      },
+    ),
   preview: (workspaceId: string, path: string) =>
     request<PreviewResult>('/api/fs/preview', {
       method: 'POST',

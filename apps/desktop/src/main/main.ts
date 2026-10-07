@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { loadEnvFile } from 'node:process';
+import { installApplicationMenu } from './menu';
 import {
   app,
   BrowserWindow,
@@ -458,6 +459,7 @@ if (hasLock) {
   void app
     .whenReady()
     .then(async () => {
+      installApplicationMenu();
       settings = { schemaVersion: 1, workspaces: [] };
       if (
         !app.isPackaged &&

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AuthState,
+  FileEntry,
   Indicator,
   PreviewResult,
   RagAnswer,
@@ -10,6 +11,7 @@ import type {
   VirtualTree,
   WorkspaceSummary,
 } from '@docsteward/contracts';
+import { ALLOWED_PREVIEW_EXTENSIONS } from '@docsteward/contracts';
 import { ApiError, api } from './api';
 import brandMarkUrl from './assets/docsteward-mark.svg';
 import changelogMarkdown from '../../../changelog.md?raw';
@@ -254,6 +256,143 @@ function FileTree({ tree, selectedPath, onOpen }: TreeProps) {
         <p className="tree-empty">Ce dossier ne contient aucun document compatible.</p>
       )}
     </div>
+  );
+}
+
+const previewExtensions = new Set<string>(ALLOWED_PREVIEW_EXTENSIONS);
+
+function PhysicalDirectory({
+  workspaceId,
+  path = '',
+  depth = 0,
+  selectedPath = '',
+  onOpen,
+}: {
+  workspaceId: string;
+  path?: string;
+  depth?: number;
+  selectedPath?: string;
+  onOpen: (path: string) => void;
+}) {
+  const [entries, setEntries] = useState<FileEntry[] | null>(null);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void api.list(workspaceId, path, controller.signal).then(
+      (next) => {
+        if (!controller.signal.aborted)
+          setEntries(
+            next.filter(
+              (entry) =>
+                entry.type === 'directory' || previewExtensions.has(fileExtension(entry.name)),
+            ),
+          );
+      },
+      (issue: unknown) => {
+        if (!controller.signal.aborted)
+          setError(issue instanceof Error ? issue.message : 'Impossible de charger ce dossier.');
+      },
+    );
+    return () => controller.abort();
+  }, [workspaceId, path, attempt]);
+
+  const toggle = (entryPath: string, open?: boolean) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (open === false || (open === undefined && next.has(entryPath))) next.delete(entryPath);
+      else next.add(entryPath);
+      return next;
+    });
+  };
+
+  const handleKey = (event: React.KeyboardEvent<HTMLButtonElement>, entry: FileEntry) => {
+    const buttons = [
+      ...(event.currentTarget
+        .closest('[role="tree"]')
+        ?.querySelectorAll<HTMLButtonElement>('button.tree-item') ?? []),
+    ];
+    const index = buttons.indexOf(event.currentTarget);
+    if (event.key === 'ArrowDown') buttons[Math.min(index + 1, buttons.length - 1)]?.focus();
+    else if (event.key === 'ArrowUp') buttons[Math.max(index - 1, 0)]?.focus();
+    else if (event.key === 'Home') buttons[0]?.focus();
+    else if (event.key === 'End') buttons.at(-1)?.focus();
+    else if (event.key === 'ArrowRight' && entry.type === 'directory') toggle(entry.path, true);
+    else if (event.key === 'ArrowLeft' && entry.type === 'directory') toggle(entry.path, false);
+    else return;
+    event.preventDefault();
+  };
+
+  if (error)
+    return (
+      <div className="inline-error" role="alert">
+        <p>{error}</p>
+        <button
+          className="secondary-button"
+          onClick={() => {
+            setEntries(null);
+            setError('');
+            setAttempt((current) => current + 1);
+          }}
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  if (!entries)
+    return (
+      <div className="tree-loading" role="status" aria-label="Chargement du dossier">
+        <span />
+        <span />
+        <span />
+      </div>
+    );
+  if (!entries.length)
+    return <p className="tree-empty">Ce dossier ne contient aucun document compatible.</p>;
+
+  return (
+    <ul className="tree-level" role="group">
+      {entries.map((entry) => {
+        const directory = entry.type === 'directory';
+        const open = expanded.has(entry.path);
+        return (
+          <li
+            key={entry.path}
+            role="treeitem"
+            aria-selected={!directory && selectedPath === entry.path}
+          >
+            <button
+              className={`tree-item${!directory && selectedPath === entry.path ? ' selected' : ''}`}
+              style={{ '--depth': depth } as React.CSSProperties}
+              aria-expanded={directory ? open : undefined}
+              onClick={() => (directory ? toggle(entry.path) : onOpen(entry.path))}
+              onKeyDown={(event) => handleKey(event, entry)}
+              title={entry.path}
+            >
+              <span className={`tree-chevron${open ? ' expanded' : ''}`}>
+                {directory ? <Icon name="chevron" /> : null}
+              </span>
+              <Icon name={directory ? 'folder' : 'file'} />
+              <span className="tree-name">{entry.name}</span>
+              {!directory ? (
+                <span className="file-kind">{fileExtension(entry.name).slice(1)}</span>
+              ) : null}
+            </button>
+            {directory && open ? (
+              <PhysicalDirectory
+                workspaceId={workspaceId}
+                path={entry.path}
+                depth={depth + 1}
+                selectedPath={selectedPath}
+                onOpen={onOpen}
+              />
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -660,6 +799,25 @@ function RagPanel({
       setBusy('');
     }
   };
+
+  if (!ragStatus && error)
+    return (
+      <div className="inline-error" role="alert">
+        <p>{error}</p>
+        <button
+          className="secondary-button"
+          onClick={() =>
+            void reload().catch((issue: unknown) =>
+              setError(
+                issue instanceof Error ? issue.message : 'Impossible de charger la recherche IA.',
+              ),
+            )
+          }
+        >
+          Réessayer
+        </button>
+      </div>
+    );
 
   if (!ragStatus)
     return (
@@ -1119,7 +1277,7 @@ export function App() {
   >('dashboard');
   const [fileTreeRefreshVersion, setFileTreeRefreshVersion] = useState(0);
   const [virtualTree, setVirtualTree] = useState<VirtualTree | null>(null);
-  const [physicalTree, setPhysicalTree] = useState<VirtualTree | null>(null);
+  const [viewingPhysical, setViewingPhysical] = useState(false);
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeId);
   const activePreviewTab = previewTabs.find((tab) => tab.path === selectedPath);
   const preview = activePreviewTab?.preview ?? null;
@@ -1127,15 +1285,6 @@ export function App() {
   const visiblePreviewTabs = previewTabs.slice(0, 3);
   const hiddenPreviewTabs = previewTabs.slice(3);
   const inspectorVisible = view === 'document' && Boolean(preview) && !inspectorCollapsed;
-
-  const refreshWorkspaces = useCallback(async (preferredId?: string) => {
-    const next = await api.workspaces();
-    setWorkspaces(next);
-    setActiveId(
-      (current) =>
-        preferredId ?? (next.some((item) => item.id === current) ? current : (next[0]?.id ?? '')),
-    );
-  }, []);
 
   useEffect(() => {
     void window.docSteward
@@ -1166,11 +1315,10 @@ export function App() {
     if (!activeId) return;
     let cancelled = false;
     void api
-      .virtualTree(activeId)
+      .activeVirtualTree(activeId)
       .then((tree) => {
         if (cancelled) return;
         setVirtualTree(tree);
-        setPhysicalTree(null);
       })
       .catch(
         (error: unknown) =>
@@ -1192,7 +1340,12 @@ export function App() {
     setPreviewTabs([]);
     setWorkspaceSection('dashboard');
     setView('workspace');
-    await refreshWorkspaces(chosen.id);
+    setViewingPhysical(false);
+    setWorkspaces((current) => [
+      chosen,
+      ...current.filter((workspace) => workspace.id !== chosen.id),
+    ]);
+    setActiveId(chosen.id);
   };
 
   const openFile = async (path: string) => {
@@ -1386,6 +1539,7 @@ export function App() {
             value={activeId}
             onChange={(event) => {
               setActiveId(event.target.value);
+              setViewingPhysical(false);
               setSelectedPath('');
               setPreviewTabs([]);
               setWorkspaceSection('dashboard');
@@ -1403,12 +1557,25 @@ export function App() {
           Ajouter un dossier
         </button>
         <div className="sidebar-rule" />
-        <FileTree
-          key={activeId}
-          tree={physicalTree ?? virtualTree}
-          selectedPath={selectedPath}
-          onOpen={openFile}
-        />
+        {!viewingPhysical &&
+        virtualTree?.workspaceId === activeId &&
+        virtualTree.status !== 'identity' ? (
+          <FileTree
+            key={activeId}
+            tree={virtualTree}
+            selectedPath={selectedPath}
+            onOpen={openFile}
+          />
+        ) : (
+          <div className="tree" role="tree" aria-label="Documents du dossier">
+            <PhysicalDirectory
+              key={`${activeId}:${fileTreeRefreshVersion}`}
+              workspaceId={activeId}
+              selectedPath={selectedPath}
+              onOpen={openFile}
+            />
+          </div>
+        )}
         <div className="sidebar-footer">
           <ProfileMenu email={authentication.account.email} onLogout={logout} />
           <button onClick={() => window.docSteward.openLogsDirectory()}>Journaux</button>
@@ -1602,14 +1769,15 @@ export function App() {
             <SorterPanel
               workspace={activeWorkspace}
               currentTree={virtualTree}
-              viewingPhysical={Boolean(physicalTree)}
-              onShowPhysical={async () =>
-                setPhysicalTree(await api.virtualTree(activeId, 'physical'))
-              }
-              onShowActive={() => setPhysicalTree(null)}
+              viewingPhysical={viewingPhysical}
+              onShowPhysical={() => {
+                setViewingPhysical(true);
+                return Promise.resolve();
+              }}
+              onShowActive={() => setViewingPhysical(false)}
               onTreeChange={(tree, message) => {
                 setVirtualTree(tree);
-                setPhysicalTree(null);
+                setViewingPhysical(false);
                 if (message) setNotice({ tone: 'info', text: message });
               }}
             />
@@ -1632,9 +1800,9 @@ export function App() {
                   .reindexVirtualTree(activeId)
                   .then((tree) => {
                     setVirtualTree(tree);
-                    setPhysicalTree(null);
+                    setViewingPhysical(false);
                   })
-                  .catch(() => api.virtualTree(activeId).then(setVirtualTree));
+                  .catch(() => api.activeVirtualTree(activeId).then(setVirtualTree));
               }}
               onWorkspaceRemoved={handleWorkspaceRemoved}
             />

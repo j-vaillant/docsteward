@@ -526,6 +526,11 @@ export class SorterService {
     return { ...current, status: 'stale' };
   }
 
+  async getActive(workspaceId: string): Promise<VirtualTree | null> {
+    await this.ensureLoaded();
+    return this.active.get(workspaceId) ?? null;
+  }
+
   getPreview(workspaceId: string): VirtualTree {
     const preview = this.previews.get(workspaceId);
     if (!preview)

@@ -351,6 +351,14 @@ export function createServer(options: ServerOptions): {
     );
   });
 
+  app.get('/api/virtual-tree/active', async (request, reply) => {
+    const parsed = WorkspaceIdSchema.safeParse(request.query);
+    if (!parsed.success)
+      return reply.code(400).send(failure('INVALID_REQUEST', 'Espace de travail invalide.'));
+    workspaceOrThrow(workspaceState, parsed.data.workspaceId);
+    return success(await sorter.getActive(parsed.data.workspaceId));
+  });
+
   app.get('/api/virtual-tree', async (request, reply) => {
     const parsed = VirtualTreeQuerySchema.safeParse(request.query);
     if (!parsed.success)
