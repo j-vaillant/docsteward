@@ -5,6 +5,10 @@ import OpenAI from 'openai';
 import { z, ZodError } from 'zod';
 import {
   ALLOWED_PREVIEW_EXTENSIONS,
+  IMAGE_MIME_TYPES,
+  ignoredFileReason,
+  PRODUCT_LIMITS,
+  indexingSizeWarning,
   VirtualRuleSchema,
   VirtualTreeSchema,
   type VirtualMappingEntry,
@@ -12,11 +16,11 @@ import {
   type VirtualTree,
   type WorkspaceRecord,
 } from '@docsteward/contracts';
-import { listDirectory, readPreviewFile } from '@docsteward/filesystem-policy';
+import { listDirectory, readPreviewFile, readFileMetadata } from '@docsteward/filesystem-policy';
 import type { RagConfiguration } from '@docsteward/contracts';
 import { extractTextParts } from './document-text';
 
-const MAX_DOCUMENTS = 1_000;
+const MAX_DOCUMENTS = PRODUCT_LIMITS.sortedDocuments;
 const MAX_EXCERPT = 2_000;
 const MAX_TOTAL_TEXT = 2 * 1024 * 1024;
 const MAX_DEPTH = 12;
@@ -220,13 +224,27 @@ export async function buildSorterInventory(workspace: WorkspaceRecord): Promise<
   if (paths.length > MAX_DOCUMENTS)
     throw new SorterError(
       'VIRTUAL_TREE_LIMIT_EXCEEDED',
-      'Ce dossier dépasse la limite de 1 000 documents du Sorter.',
+      'Ce dossier dépasse la limite de 200 documents du classement IA.',
       413,
     );
   const files = await Promise.all(
     paths.map(async (relativePath) => ({
       relativePath,
-      file: await readPreviewFile(workspace.rootPath, relativePath),
+      file: IMAGE_MIME_TYPES[extname(relativePath).toLowerCase()]
+        ? await readFileMetadata(workspace.rootPath, relativePath).then((metadata) => ({
+            ...metadata,
+            sha256: createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
+            bytes: Buffer.alloc(0),
+          }))
+        : await readFileMetadata(workspace.rootPath, relativePath).then(async (metadata) => {
+            if (indexingSizeWarning(relativePath, metadata.size))
+              return {
+                ...metadata,
+                sha256: createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
+                bytes: Buffer.alloc(0),
+              };
+            return readPreviewFile(workspace.rootPath, relativePath);
+          }),
     })),
   );
   const shaCounts = new Map<string, number>();
@@ -237,7 +255,7 @@ export async function buildSorterInventory(workspace: WorkspaceRecord): Promise<
     const extension = extname(relativePath).toLowerCase();
     let excerpt: string | undefined;
     try {
-      excerpt = (await extractTextParts(file.bytes, extension))
+      excerpt = (IMAGE_MIME_TYPES[extension] ? [] : await extractTextParts(file.bytes, extension))
         .map((part) => part.text.trim())
         .filter(Boolean)
         .join('\n')
@@ -471,7 +489,14 @@ export class SorterService {
             parsed.success &&
             (parsed.data.status === 'active' || parsed.data.status === 'stale')
           ) {
-            this.active.set(parsed.data.workspaceId, parsed.data);
+            const entries = parsed.data.entries.filter(
+              (entry) => !ignoredFileReason(entry.physicalRelativePath),
+            );
+            this.active.set(parsed.data.workspaceId, {
+              ...parsed.data,
+              entries,
+              summary: summarize(entries),
+            });
           }
         }
       } catch (error) {

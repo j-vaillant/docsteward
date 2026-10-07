@@ -494,6 +494,53 @@ textarea:focus-visible,
     serif;
   letter-spacing: -0.02em;
 }
+.index-report {
+  gap: 14px;
+  overflow-wrap: anywhere;
+}
+.index-report h2 {
+  margin: 0;
+  font:
+    600 20px/1.25 Georgia,
+    serif;
+}
+.index-report p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.index-report a.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  color: var(--ink);
+  text-decoration: none;
+}
+.index-report details {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.index-report summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.index-report li {
+  margin-bottom: 8px;
+}
+.index-report details button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+.index-report details button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .settings-section-heading p,
 .settings-muted,
 .index-settings-row p {
@@ -2016,6 +2063,20 @@ textarea {
   color: var(--muted);
   font-size: 12px;
 }
+.image-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  height: 100%;
+  padding: 24px;
+  overflow: auto;
+}
+.image-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
 .preview-limit {
   margin: 16px 0 0;
 }
@@ -2676,4 +2737,20 @@ textarea {
   .sorter-tree-surface {
     min-height: 70vh;
   }
+}
+
+.indexing-warning {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 20px;
+  color: #75500a;
+  background: #fff5d6;
+  border-bottom: 1px solid #e8ce8a;
+  font-size: 13px;
+}
+.indexing-warning svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }

@@ -7,11 +7,16 @@ import type {
   RagAnswer,
   RagField,
   RagStatus,
+  IndexReport,
   VirtualMappingEntry,
   VirtualTree,
   WorkspaceSummary,
 } from '@docsteward/contracts';
-import { ALLOWED_PREVIEW_EXTENSIONS } from '@docsteward/contracts';
+import {
+  ALLOWED_PREVIEW_EXTENSIONS,
+  ignoredFileReason,
+  IMAGE_MIME_TYPES,
+} from '@docsteward/contracts';
 import { ApiError, api } from './api';
 import brandMarkUrl from './assets/docsteward-mark.svg';
 import changelogMarkdown from '../../../changelog.md?raw';
@@ -40,6 +45,7 @@ function formatDate(iso: string): string {
 }
 
 function formatLabel(extension: string): string {
+  if (IMAGE_MIME_TYPES[extension]) return 'Image';
   if (extension === '.doc' || extension === '.docx') return 'Word';
   if (extension === '.xls' || extension === '.xlsx') return 'Excel';
   if (extension === '.pdf') return 'PDF';
@@ -287,7 +293,9 @@ function PhysicalDirectory({
           setEntries(
             next.filter(
               (entry) =>
-                entry.type === 'directory' || previewExtensions.has(fileExtension(entry.name)),
+                entry.type === 'directory' ||
+                (!ignoredFileReason(entry.name) &&
+                  previewExtensions.has(fileExtension(entry.name))),
             ),
           );
       },
@@ -406,6 +414,17 @@ function DocumentPreview({
   path: string;
 }) {
   const [activeSheet, setActiveSheet] = useState(0);
+  if (preview.kind === 'unavailable') return <div className="preview-empty">{preview.reason}</div>;
+  if (preview.kind === 'image') {
+    return (
+      <div className="image-preview">
+        <img
+          src={api.rawUrl(workspaceId, path)}
+          alt={`Aperçu de ${path.split('/').at(-1) ?? path}`}
+        />
+      </div>
+    );
+  }
   if (preview.kind === 'pdf') {
     return (
       <iframe
@@ -622,6 +641,58 @@ function VersionHistoryDialog({
   );
 }
 
+function IndexingReport({ report }: { report: IndexReport }) {
+  const [page, setPage] = useState(0);
+  return (
+    <section className="settings-section index-report">
+      <h2>Rapport d’indexation</h2>
+      <p>
+        {formatDate(report.completedAt)} · {Math.round(report.durationMs / 1000)} s (interruptions
+        comprises)
+      </p>
+      <p>
+        {report.totalFiles} fichiers recensés · {report.indexedFiles.length} indexés ·{' '}
+        {report.notIndexed.length} non indexés
+      </p>
+      <a
+        className="secondary-button"
+        href={`/api/rag/report/download?${new URLSearchParams({ workspaceId: report.workspaceId })}`}
+        download="rapport-indexation.txt"
+      >
+        Télécharger le rapport détaillé
+      </a>
+      {report.notes.map((note) => (
+        <p key={note}>{note}</p>
+      ))}
+      {report.notIndexed.length > 0 && (
+        <details>
+          <summary>Fichiers non indexés et raisons</summary>
+          <ul>
+            {report.notIndexed.slice(page * 100, (page + 1) * 100).map((entry) => (
+              <li key={entry.path}>
+                <strong>{entry.path}</strong> : {entry.reason}
+              </li>
+            ))}
+          </ul>
+          <button disabled={page === 0} onClick={() => setPage(page - 1)}>
+            Précédent
+          </button>
+          <span>
+            {' '}
+            Page {page + 1} / {Math.ceil(report.notIndexed.length / 100)}{' '}
+          </span>
+          <button
+            disabled={(page + 1) * 100 >= report.notIndexed.length}
+            onClick={() => setPage(page + 1)}
+          >
+            Suivant
+          </button>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function RagPanel({
   workspace,
   section,
@@ -636,6 +707,7 @@ function RagPanel({
   onWorkspaceRemoved: () => void;
 }) {
   const [ragStatus, setRagStatus] = useState<RagStatus | null>(null);
+  const [report, setReport] = useState<IndexReport | null>(null);
   const [indicators, setIndicators] = useState<Indicator[]>([]);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState<RagAnswer | null>(null);
@@ -649,13 +721,15 @@ function RagPanel({
   const [editingTitle, setEditingTitle] = useState('');
 
   const reload = useCallback(async () => {
-    const [nextStatus, nextIndicators] = await Promise.all([
+    const [nextStatus, nextIndicators, nextReport] = await Promise.all([
       api.ragStatus(workspace.id),
       api.indicators(workspace.id),
+      api.indexReport(workspace.id),
     ]);
     setRagStatus(nextStatus);
     setIndicators(nextIndicators);
     setConsent(nextStatus.enabled);
+    setReport(nextReport);
   }, [workspace.id]);
 
   useEffect(() => {
@@ -666,6 +740,33 @@ function RagPanel({
       setError(issue instanceof Error ? issue.message : 'Impossible de charger la recherche IA.'),
     );
   }, [reload]);
+
+  useEffect(() => {
+    if (busy !== 'index' && ragStatus?.status !== 'indexing') return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const next = await api.ragStatus(workspace.id);
+        if (stopped) return;
+        setRagStatus(next);
+        if (next.status !== 'indexing' && busy !== 'index') {
+          const latestReport = await api.indexReport(workspace.id);
+          if (!stopped) setReport(latestReport);
+          return;
+        }
+      } catch (issue) {
+        if (!stopped)
+          setError(issue instanceof Error ? issue.message : 'Suivi de l’indexation indisponible.');
+      }
+      if (!stopped) timer = setTimeout(() => void poll(), 1000);
+    };
+    timer = setTimeout(() => void poll(), 250);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [busy, ragStatus?.status, workspace.id]);
 
   const enable = async () => {
     if (!consent) return;
@@ -686,6 +787,7 @@ function RagPanel({
     setError('');
     try {
       setRagStatus(await api.indexWorkspace(workspace.id));
+      await reload();
       onIndexUpdated();
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : 'L’indexation a échoué.');
@@ -899,27 +1001,80 @@ function RagPanel({
                 </p>
               </div>
               <div className="settings-actions">
-                <button className="primary-button" disabled={busy === 'index'} onClick={buildIndex}>
+                <button
+                  className="primary-button"
+                  disabled={busy === 'index' || ragStatus.status === 'indexing'}
+                  onClick={buildIndex}
+                >
                   {busy === 'index'
                     ? 'Indexation…'
                     : ragStatus.status === 'ready' || ragStatus.status === 'stale'
                       ? 'Mettre à jour l’index'
-                      : 'Indexer les documents'}
+                      : ragStatus.resumable
+                        ? 'Reprendre l’indexation'
+                        : 'Indexer les documents'}
                 </button>
-                <button className="text-danger" onClick={() => void disableRag()}>
+                <button
+                  className="text-danger"
+                  disabled={busy === 'index' || ragStatus.status === 'indexing'}
+                  onClick={() => void disableRag()}
+                >
                   Désactiver et supprimer l’index
                 </button>
               </div>
             </div>
           )}
-          {busy === 'index' ? (
+          {busy === 'index' || ragStatus.status === 'indexing' ? (
             <div className="index-progress" role="status">
-              {ragStatus.status === 'ready' || ragStatus.status === 'stale'
-                ? 'Mise à jour des documents modifiés et de l’index local…'
-                : 'Création des embeddings et de l’index local…'}
+              <p>
+                {
+                  {
+                    inventory: 'Recensement des fichiers…',
+                    extraction: 'Extraction du texte et OCR si nécessaire…',
+                    embeddings: 'Création des embeddings…',
+                    saving: 'Enregistrement du lot…',
+                  }[ragStatus.phase ?? 'inventory']
+                }
+              </p>
+              {ragStatus.totalFiles !== undefined && (
+                <p>
+                  {ragStatus.processedFiles ?? 0} / {ragStatus.totalFiles} fichiers traités ·{' '}
+                  {ragStatus.indexedDocuments} indexés et enregistrés · {ragStatus.skippedDocuments}{' '}
+                  exclus
+                </p>
+              )}
+              {ragStatus.currentFile && <p>{ragStatus.currentFile}</p>}
+              {ragStatus.phase === 'embeddings' && (
+                <progress
+                  max={1}
+                  value={ragStatus.progress ?? 0}
+                  aria-label="Progression des embeddings du lot"
+                />
+              )}
+              {ragStatus.startedAt && (
+                <p>
+                  Durée :{' '}
+                  {Math.max(0, Math.round((Date.now() - Date.parse(ragStatus.startedAt)) / 1000))} s
+                </p>
+              )}
+              <button
+                className="secondary-button"
+                onClick={() =>
+                  void api
+                    .cancelIndex(workspace.id)
+                    .then(reload)
+                    .catch((issue: unknown) =>
+                      setError(issue instanceof Error ? issue.message : 'Interruption impossible.'),
+                    )
+                }
+              >
+                Interrompre après l’opération en cours
+              </button>
             </div>
           ) : null}
         </section>
+
+        {report && <IndexingReport key={report.completedAt} report={report} />}
 
         <section className="settings-section danger-zone">
           <div className="settings-section-heading">
@@ -931,7 +1086,9 @@ function RagPanel({
           </div>
           <button
             className="danger-button"
-            disabled={busy === 'remove-workspace'}
+            disabled={
+              busy === 'remove-workspace' || busy === 'index' || ragStatus.status === 'indexing'
+            }
             onClick={() => void removeWorkspace()}
           >
             {busy === 'remove-workspace'
@@ -1354,9 +1511,7 @@ export function App() {
     setNotice(null);
     setSelectedPath(path);
     const existingTab = previewTabs.find((tab) => tab.path === path);
-    if (existingTab) return;
-
-    setPreviewTabs((current) => [...current, { path, preview: null }]);
+    if (!existingTab) setPreviewTabs((current) => [...current, { path, preview: null }]);
     try {
       const next = await api.preview(activeId, path);
       setPreviewTabs((current) =>
@@ -1379,9 +1534,7 @@ export function App() {
   };
 
   const selectPreviewTab = (path: string) => {
-    setSelectedPath(path);
-    setView('document');
-    setNotice(null);
+    void openFile(path);
   };
 
   const closePreviewTab = (path: string) => {
@@ -1734,6 +1887,12 @@ export function App() {
               </div>
             ) : null}
           </header>
+          {preview?.indexingWarning ? (
+            <div className="indexing-warning" role="status">
+              <Icon name="info" />
+              <span>{preview.indexingWarning} Ce fichier reste visible dans le dossier.</span>
+            </div>
+          ) : null}
           {notice ? (
             <div className={`notice ${notice.tone}`} role="status">
               {notice.text}
@@ -1873,7 +2032,7 @@ export function App() {
           </div>
           <div className="hash-block">
             <span>Empreinte SHA-256</span>
-            <code>{preview.sha256}</code>
+            <code>{preview.sha256 || 'Non calculée (aperçu indisponible)'}</code>
           </div>
         </aside>
       ) : null}

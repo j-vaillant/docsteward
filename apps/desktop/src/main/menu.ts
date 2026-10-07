@@ -1,4 +1,5 @@
 import { app, dialog, Menu, type MenuItemConstructorOptions } from 'electron';
+import { PRODUCT_LIMITS } from '@docsteward/contracts';
 
 export function installApplicationMenu(): void {
   const isMac = process.platform === 'darwin';
@@ -87,7 +88,33 @@ export function installApplicationMenu(): void {
           : []),
       ],
     },
-    { label: 'Ai&de', submenu: [about] },
+    {
+      label: 'Ai&de',
+      submenu: [
+        {
+          label: 'Limites du produit',
+          click: () => {
+            void dialog.showMessageBox({
+              type: 'info',
+              title: 'Limites du produit',
+              message: 'Limites de DocSteward',
+              detail: [
+                `Questions et indicateurs : ${PRODUCT_LIMITS.indexedDocuments} fichiers compatibles par dossier, avec ${PRODUCT_LIMITS.indexCharacters.toLocaleString('fr-FR')} caractères de texte au total.`,
+                `Fichiers texte : 2 Mio. PDF, Word et Excel : 20 Mio. PDF : ${PRODUCT_LIMITS.pdfPages} pages. Excel : ${PRODUCT_LIMITS.workbookSheets} feuilles et ${PRODUCT_LIMITS.sheetCharacters.toLocaleString('fr-FR')} caractères par feuille.`,
+                'Un fichier dépassant ces plafonds est exclu entièrement de l’index et indiqué comme non indexé dans le rapport. Il reste visible dans l’arborescence avec un avertissement dans l’aperçu. L’aperçu est limité à 5 Mio pour le texte et 50 Mio pour les autres formats ; Excel affiche les 10 premières feuilles, 200 lignes et 50 colonnes.',
+                `Classement IA : ${PRODUCT_LIMITS.sortedDocuments} documents au maximum par classement. Il utilise les noms, chemins, métadonnées et les 2 000 premiers caractères extraits. Lorsque le contenu est hors limites ou illisible, seules les métadonnées sont utilisées.`,
+                'Les réponses utilisent au maximum cinq extraits et peuvent manquer des informations. Les totaux et comparaisons sur tout un dossier ne sont pas garantis exhaustifs. Vérifiez les sources des réponses et indicateurs.',
+                'Les images sont indexées par leurs métadonnées uniquement, sans analyse visuelle ni OCR. L’OCR des PDF est en français et anglais ; sa fiabilité dépend de la qualité du scan.',
+                'Ces plafonds ne garantissent pas un temps de traitement : les performances dépendent des documents, de l’ordinateur et du service IA. Les indicateurs sont actualisés à la demande.',
+              ].join('\n\n'),
+              buttons: ['Fermer'],
+            });
+          },
+        },
+        { type: 'separator' },
+        about,
+      ],
+    },
   );
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

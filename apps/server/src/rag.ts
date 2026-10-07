@@ -12,6 +12,10 @@ import {
 import { OpenAIEmbedding } from '@llamaindex/openai';
 import {
   IndicatorSchema,
+  IMAGE_MIME_TYPES,
+  ignoredFileReason,
+  PRODUCT_LIMITS,
+  indexingSizeWarning,
   RagAnswerSchema,
   RagFieldSchema,
   RagCitationSchema,
@@ -21,16 +25,27 @@ import {
   type RagCitation,
   type RagConfiguration,
   type RagStatus,
+  type IndexReport,
   type WorkspaceRecord,
 } from '@docsteward/contracts';
-import { listDirectory, readPreviewFile } from '@docsteward/filesystem-policy';
+import { listDirectory, readPreviewFile, readFileMetadata } from '@docsteward/filesystem-policy';
 import { z } from 'zod';
 import type { SafeLogger } from './logger';
-import { extractTextParts } from './document-text';
+import { extractTextParts, type ExtractedTextPart } from './document-text';
+import { batchStorage } from './rag-storage';
+import { DocumentLimitError } from './product-limits';
 
 export { extractPdfPages } from './document-text';
 
-const MAX_DOCUMENTS = 1_000;
+const MAX_DOCUMENTS = PRODUCT_LIMITS.indexedDocuments;
+const INDEX_POLICY_VERSION = 2;
+function indexable(path: string): boolean {
+  return (
+    !ignoredFileReason(path) &&
+    (SUPPORTED.has(extname(path).toLowerCase()) ||
+      Boolean(IMAGE_MIME_TYPES[extname(path).toLowerCase()]))
+  );
+}
 const MAX_CONTEXT_CHARACTERS = 60_000;
 const SUPPORTED = new Set([
   '.txt',
@@ -58,6 +73,7 @@ type ManifestEntry = {
   modifiedAt: string;
   indexedAt: string;
   indexDocumentIds: string[];
+  textCharacters: number;
 };
 
 type CorpusEntry = {
@@ -73,11 +89,15 @@ type Manifest = {
   skippedPaths: string[];
   indexedAt: string;
   embeddingModel?: string;
+  storageName?: string;
+  exclusions?: IndexReport['notIndexed'];
+  report?: IndexReport;
+  policyVersion?: number;
 };
 type RagDocument = {
   id: string;
   text: string;
-  metadata: Omit<ManifestEntry, 'indexedAt' | 'indexDocumentIds'> & {
+  metadata: Omit<ManifestEntry, 'indexedAt' | 'indexDocumentIds' | 'textCharacters'> & {
     workspaceId: string;
     documentName: string;
     sheet?: string;
@@ -96,12 +116,14 @@ export interface RagProvider {
     documents: RagDocument[],
     persistDir: string,
     onProgress: (done: number, total: number) => void,
+    onPhase?: (phase: 'embeddings' | 'saving') => void,
   ): Promise<void>;
   update(
     documents: RagDocument[],
     removedDocumentIds: string[],
     persistDir: string,
     onProgress: (done: number, total: number) => void,
+    onPhase?: (phase: 'embeddings' | 'saving') => void,
   ): Promise<void>;
   query(
     persistDir: string,
@@ -120,6 +142,24 @@ export class RagError extends Error {
     super(message);
     this.name = 'RagError';
   }
+}
+
+export function formatIndexReport(report: IndexReport): string {
+  return [
+    'Rapport d’indexation — DocSteward',
+    `Terminé le : ${report.completedAt}`,
+    `Durée (interruptions comprises) : ${Math.round(report.durationMs / 1000)} s`,
+    `Fichiers recensés : ${report.totalFiles}`,
+    `Fichiers indexés : ${report.indexedFiles.length}`,
+    `Fichiers non indexés : ${report.notIndexed.length}`,
+    ...report.notes,
+    '',
+    'FICHIERS INDEXÉS',
+    ...report.indexedFiles,
+    '',
+    'FICHIERS NON INDEXÉS',
+    ...report.notIndexed.map((entry) => `${entry.path} — ${entry.reason} [${entry.code}]`),
+  ].join('\n');
 }
 
 function errorStatus(error: unknown): number | undefined {
@@ -155,7 +195,7 @@ function errorDiagnostic(error: unknown): Record<string, string | number | boole
   };
 }
 
-export function publicMessage(error: unknown): RagError {
+export function publicMessage(error: unknown, operation: 'query' | 'indexing' = 'query'): RagError {
   if (error instanceof RagError) return error;
   const status = errorStatus(error);
   const name = errorName(error);
@@ -187,14 +227,17 @@ export function publicMessage(error: unknown): RagError {
     error instanceof OpenAI.APIConnectionError ||
     name === 'APIConnectionError' ||
     name === 'APIConnectionTimeoutError' ||
+    (error instanceof Error && /^(Connection error\.|fetch failed)$/.test(error.message)) ||
     (status !== undefined && status >= 500)
   )
     return new RagError(
       'OPENAI_UNAVAILABLE',
-      'OpenAI est momentanément indisponible. Vérifiez votre connexion puis réessayez.',
+      'Le service IA est inaccessible. Vérifiez votre connexion puis réessayez.',
       503,
     );
-  return new RagError('RAG_QUERY_FAILED', 'La recherche documentaire a échoué. Réessayez.', 500);
+  return operation === 'indexing'
+    ? new RagError('INDEX_BUILD_FAILED', 'L’indexation des documents a échoué. Réessayez.', 500)
+    : new RagError('RAG_QUERY_FAILED', 'La recherche documentaire a échoué. Réessayez.', 500);
 }
 
 // Structured Outputs represents absent metadata as null. Keep the public
@@ -314,19 +357,22 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
     documents: RagDocument[],
     persistDir: string,
     onProgress: (done: number, total: number) => void,
+    onPhase?: (phase: 'embeddings' | 'saving') => void,
   ): Promise<void> {
     await mkdir(persistDir, { recursive: true, mode: 0o700 });
-    const index = await Settings.withEmbedModel(this.embedding, async () => {
+    await Settings.withEmbedModel(this.embedding, async () => {
       // The default vector store resolves Settings.embedModel while the storage
       // context is created. Creating it before entering this scope leaves the
       // store without an embedding model and makes every build fail locally.
-      const storageContext = await storageContextFromDefaults({ persistDir });
-      return await VectorStoreIndex.fromDocuments(documents.map(toIndexDocument), {
+      const { storageContext, persist } = await batchStorage(persistDir, this.embedding);
+      onPhase?.('embeddings');
+      await VectorStoreIndex.fromDocuments(documents.map(toIndexDocument), {
         storageContext,
         progressCallback: onProgress,
       });
+      onPhase?.('saving');
+      await persist();
     });
-    this.indexes.set(persistDir, index);
   }
 
   async update(
@@ -334,13 +380,15 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
     removedDocumentIds: string[],
     persistDir: string,
     onProgress: (done: number, total: number) => void,
+    onPhase?: (phase: 'embeddings' | 'saving') => void,
   ): Promise<void> {
     const stagingDir = `${persistDir}.${randomUUID()}.tmp`;
     const backupDir = `${persistDir}.${randomUUID()}.bak`;
     try {
       await cp(persistDir, stagingDir, { recursive: true });
       await Settings.withEmbedModel(this.embedding, async () => {
-        const storageContext = await storageContextFromDefaults({ persistDir: stagingDir });
+        const { storageContext, persist } = await batchStorage(stagingDir, this.embedding);
+        onPhase?.('embeddings');
         let index = await VectorStoreIndex.init({ storageContext });
         for (const documentId of removedDocumentIds) {
           await index.deleteRefDoc(documentId);
@@ -354,6 +402,8 @@ export class LlamaIndexOpenAIProvider implements RagProvider {
         } else {
           onProgress(1, 1);
         }
+        onPhase?.('saving');
+        await persist();
       });
 
       await rename(persistDir, backupDir);
@@ -512,9 +562,8 @@ async function collectCorpus(rootPath: string, path = ''): Promise<CorpusEntry[]
   const entries = await listDirectory(rootPath, path);
   const result: CorpusEntry[] = [];
   for (const entry of entries) {
-    if (result.length >= MAX_DOCUMENTS) break;
     if (entry.type === 'directory') result.push(...(await collectCorpus(rootPath, entry.path)));
-    else if (SUPPORTED.has(extname(entry.path).toLowerCase())) {
+    else {
       result.push({
         relativePath: entry.path,
         size: entry.size,
@@ -522,7 +571,7 @@ async function collectCorpus(rootPath: string, path = ''): Promise<CorpusEntry[]
       });
     }
   }
-  return result.slice(0, MAX_DOCUMENTS);
+  return result;
 }
 
 function indexDocumentId(workspaceId: string, relativePath: string, part: string): string {
@@ -538,11 +587,37 @@ async function extractDocuments(
   const documents: RagDocument[] = [];
   const entries: ManifestEntry[] = [];
   const skippedPaths: string[] = [];
+  const exclusions: IndexReport['notIndexed'] = [];
   const indexedAt = new Date().toISOString();
   for (const { relativePath } of corpus) {
     try {
-      const file = await readPreviewFile(workspace.rootPath, relativePath);
+      const metadata = await readFileMetadata(workspace.rootPath, relativePath);
+      const sizeWarning = indexingSizeWarning(relativePath, metadata.size);
+      if (sizeWarning) throw new DocumentLimitError('FILE_TOO_LARGE', sizeWarning);
       const extension = extname(relativePath).toLowerCase();
+      const image = Boolean(IMAGE_MIME_TYPES[extension]);
+      const file = image
+        ? await readFileMetadata(workspace.rootPath, relativePath).then((metadata) => ({
+            ...metadata,
+            sha256: createHash('sha256').update(JSON.stringify(metadata)).digest('hex'),
+            bytes: Buffer.alloc(0),
+          }))
+        : await readPreviewFile(workspace.rootPath, relativePath);
+      const parts: ExtractedTextPart[] = image
+        ? [
+            {
+              part: 'image-metadata',
+              text: [
+                'Image : métadonnées uniquement. Le contenu visuel n’a pas été analysé.',
+                'Nom : ' + basename(relativePath),
+                'Chemin relatif : ' + relativePath,
+                'Format : ' + extension.slice(1).toUpperCase(),
+                'Taille : ' + file.size + ' octets',
+                'Date de modification : ' + file.modifiedAt,
+              ].join('\n'),
+            },
+          ]
+        : await extractTextParts(file.bytes, extension);
       const base = {
         workspaceId: workspace.id,
         relativePath,
@@ -551,19 +626,21 @@ async function extractDocuments(
         size: file.size,
         modifiedAt: file.modifiedAt,
       };
-      const fileDocuments: RagDocument[] = (await extractTextParts(file.bytes, extension)).map(
-        (part) => ({
-          id: indexDocumentId(workspace.id, relativePath, part.part),
-          text: part.text,
-          metadata: {
-            ...base,
-            ...(part.sheet ? { sheet: part.sheet } : {}),
-            ...(part.page ? { page: part.page } : {}),
-          },
-        }),
-      );
+      const fileDocuments: RagDocument[] = parts.map((part) => ({
+        id: indexDocumentId(workspace.id, relativePath, part.part),
+        text: part.text,
+        metadata: {
+          ...base,
+          ...(part.sheet ? { sheet: part.sheet } : {}),
+          ...(part.page ? { page: part.page } : {}),
+        },
+      }));
       const readableDocuments = fileDocuments.filter((item) => item.text.trim().length > 0);
-      if (!readableDocuments.length) throw new Error('Document sans texte exploitable');
+      if (!readableDocuments.length)
+        throw new RagError(
+          'NO_TEXT',
+          'Document sans texte exploitable (vide ou OCR sans résultat).',
+        );
       documents.push(...readableDocuments);
       entries.push({
         relativePath,
@@ -572,9 +649,34 @@ async function extractDocuments(
         modifiedAt: file.modifiedAt,
         indexedAt,
         indexDocumentIds: readableDocuments.map((item) => item.id),
+        textCharacters: readableDocuments.reduce((sum, item) => sum + item.text.length, 0),
       });
-    } catch {
+    } catch (error) {
       skippedPaths.push(relativePath);
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? String(error.code)
+          : 'EXTRACTION_FAILED';
+      const reasons: Record<string, string> = {
+        INVALID_UTF8:
+          'Données binaires ou encodage non pris en charge (UTF-8, UTF-16 avec BOM ou Windows-1252 attendus).',
+        FILE_TOO_LARGE:
+          'Fichier trop volumineux : limite de 2 Mio pour le texte, 20 Mio pour PDF, Word et Excel.',
+        NO_TEXT: 'Aucun texte exploitable (document vide ou OCR sans résultat).',
+        FILE_NOT_FOUND: 'Fichier supprimé ou introuvable.',
+        FS_PERMISSION_DENIED: 'Accès au fichier refusé.',
+        SYMLINK_NOT_ALLOWED: 'Lien symbolique non autorisé.',
+      };
+      exclusions.push({
+        path: relativePath,
+        code,
+        reason:
+          (error instanceof DocumentLimitError ? error.message : undefined) ??
+          reasons[code] ??
+          (error instanceof TypeError
+            ? 'Texte UTF-8 invalide ou format illisible.'
+            : 'Extraction impossible : fichier illisible, endommagé ou format non reconnu.'),
+      });
     }
   }
   return {
@@ -584,6 +686,7 @@ async function extractDocuments(
       documents: entries,
       corpus,
       skippedPaths,
+      exclusions,
       indexedAt,
       embeddingModel,
     },
@@ -593,6 +696,7 @@ async function extractDocuments(
 function corpusMatches(manifest: Manifest, corpus: CorpusEntry[], embeddingModel: string): boolean {
   return (
     manifest.schemaVersion === 3 &&
+    manifest.policyVersion === INDEX_POLICY_VERSION &&
     manifest.embeddingModel === embeddingModel &&
     Array.isArray(manifest.corpus) &&
     JSON.stringify(manifest.corpus) === JSON.stringify(corpus)
@@ -602,6 +706,7 @@ function corpusMatches(manifest: Manifest, corpus: CorpusEntry[], embeddingModel
 function supportsIncrementalUpdate(manifest: Manifest, embeddingModel: string): boolean {
   return (
     manifest.schemaVersion === 3 &&
+    manifest.policyVersion === INDEX_POLICY_VERSION &&
     manifest.embeddingModel === embeddingModel &&
     Array.isArray(manifest.corpus) &&
     Array.isArray(manifest.documents) &&
@@ -624,6 +729,7 @@ export class RagService {
   private configuration: RagConfiguration;
   private readonly statuses = new Map<string, RagStatus>();
   private readonly builds = new Map<string, Promise<RagStatus>>();
+  private readonly cancellations = new Set<string>();
 
   constructor(
     private readonly options: {
@@ -640,7 +746,9 @@ export class RagService {
   setApiKey(apiKey?: string, apiBaseUrl?: string): void {
     this.provider =
       this.options.provider ??
-      (apiKey ? new LlamaIndexOpenAIProvider(apiKey, this.configuration, apiBaseUrl) : undefined);
+      (apiKey
+        ? new LlamaIndexOpenAIProvider(apiKey, this.configuration, apiBaseUrl, this.options.logger)
+        : undefined);
   }
   setConfiguration(configuration: RagConfiguration, apiKey?: string, apiBaseUrl?: string): void {
     const embeddingChanged = configuration.embeddingModel !== this.configuration.embeddingModel;
@@ -699,6 +807,7 @@ export class RagService {
       ...status,
       enabled,
       keyConfigured: Boolean(this.provider),
+      resumable: await pathExists(join(this.root(workspace.id), 'pending.json')),
       ...(manifest && status.status === 'ready' && !corpusIsFresh ? { status: 'stale' } : {}),
     };
   }
@@ -726,62 +835,330 @@ export class RagService {
     this.builds.set(workspace.id, job);
     return job;
   }
+  private storagePath(workspaceId: string, manifest: Manifest | null): string {
+    const name = manifest?.storageName;
+    if (name && !/^storage-[a-f0-9-]{36}$/.test(name))
+      throw new Error('Invalid storage generation');
+    return join(this.root(workspaceId), name ?? 'storage');
+  }
+  async report(workspaceId: string): Promise<IndexReport | null> {
+    return (
+      (await readJson<IndexReport | null>(join(this.root(workspaceId), 'report.json'), null)) ??
+      (await readJson<Manifest | null>(this.manifestPath(workspaceId), null))?.report ??
+      null
+    );
+  }
+  async cancel(workspaceId: string): Promise<void> {
+    this.cancellations.add(workspaceId);
+    await this.builds.get(workspaceId)?.catch(() => undefined);
+  }
   private async doBuild(workspace: WorkspaceRecord): Promise<RagStatus> {
     if (!(await this.isEnabled(workspace.id)))
       throw new RagError('RAG_NOT_ENABLED', 'Activez la recherche IA pour cet espace.', 409);
-    if (!this.provider)
+    const provider = this.provider;
+    if (!provider)
       throw new RagError('OPENAI_KEY_MISSING', 'Ajoutez une clé OpenAI dans les paramètres.', 409);
-    const former = await readJson<Manifest | null>(this.manifestPath(workspace.id), null);
-    const corpus = await collectCorpus(workspace.rootPath);
-    const storageDir = join(this.root(workspace.id), 'storage');
+    this.cancellations.delete(workspace.id);
+    const embeddingModel = this.configuration.embeddingModel;
+    const startedAt = new Date().toISOString();
     const base: RagStatus = {
       workspaceId: workspace.id,
       enabled: true,
       keyConfigured: true,
       status: 'indexing',
-      indexedDocuments: former?.documents.length ?? 0,
-      skippedDocuments: former?.skippedPaths?.length ?? 0,
+      phase: 'inventory',
       progress: 0,
-      lastIndexedAt: former?.indexedAt ?? null,
+      processedFiles: 0,
+      indexedDocuments: 0,
+      skippedDocuments: 0,
+      lastIndexedAt: null,
+      startedAt,
     };
     this.statuses.set(workspace.id, base);
+    const updateStatus = (values: Partial<RagStatus>) =>
+      this.statuses.set(workspace.id, { ...this.statuses.get(workspace.id)!, ...values });
+    const checkCancelled = () => {
+      if (this.cancellations.has(workspace.id))
+        throw new RagError(
+          'INDEX_CANCELLED',
+          'Indexation interrompue. Les lots enregistrés pourront être repris.',
+          409,
+        );
+    };
+    const onPhase = (phase: 'embeddings' | 'saving') => {
+      checkCancelled();
+      updateStatus({ phase, currentFile: undefined });
+    };
+    const pendingPath = join(this.root(workspace.id), 'pending.json');
+    type Checkpoint = {
+      signature: string;
+      manifest: Manifest;
+      completed: string[];
+      startedAt: string;
+    };
     try {
+      const former = await readJson<Manifest | null>(this.manifestPath(workspace.id), null);
+      const corpus = await collectCorpus(workspace.rootPath);
+      checkCancelled();
+      const eligible = corpus
+        .filter((entry) => indexable(entry.relativePath))
+        .slice(0, MAX_DOCUMENTS);
+      const selected = new Set(eligible.map((entry) => entry.relativePath));
+      const signature = createHash('sha256')
+        .update(
+          JSON.stringify({ corpus, embeddingModel, former, policyVersion: INDEX_POLICY_VERSION }),
+        )
+        .digest('hex');
+      const saved = await readJson<Checkpoint | null>(pendingPath, null);
+      let checkpoint: Checkpoint;
       if (
-        former &&
-        supportsIncrementalUpdate(former, this.configuration.embeddingModel) &&
-        (await pathExists(storageDir))
+        saved?.signature === signature &&
+        (!saved.manifest.storageName ||
+          (await pathExists(this.storagePath(workspace.id, saved.manifest))))
       ) {
-        return await this.updateIndex(workspace, former, corpus, storageDir, base);
+        checkpoint = saved;
+      } else {
+        const incremental =
+          former &&
+          supportsIncrementalUpdate(former, embeddingModel) &&
+          (await pathExists(this.storagePath(workspace.id, former)));
+        const previous = new Map(former?.corpus?.map((entry) => [entry.relativePath, entry]) ?? []);
+        const previousSelection = new Set(
+          former?.corpus
+            ?.filter((entry) => indexable(entry.relativePath))
+            .slice(0, MAX_DOCUMENTS)
+            .map((entry) => entry.relativePath) ?? [],
+        );
+        const unchanged = incremental
+          ? eligible
+              .filter((entry) => {
+                const old = previous.get(entry.relativePath);
+                return (
+                  previousSelection.has(entry.relativePath) &&
+                  !former?.exclusions?.some(
+                    (item) => item.path === entry.relativePath && item.code === 'INDEX_TEXT_LIMIT',
+                  ) &&
+                  (former?.policyVersion === INDEX_POLICY_VERSION ||
+                    Boolean(
+                      former?.documents.some(
+                        (document) => document.relativePath === entry.relativePath,
+                      ),
+                    )) &&
+                  old?.size === entry.size &&
+                  old.modifiedAt === entry.modifiedAt
+                );
+              })
+              .map((entry) => entry.relativePath)
+          : [];
+        const retained = new Set(unchanged);
+        const exclusions: IndexReport['notIndexed'] = corpus
+          .filter(
+            (entry) => !selected.has(entry.relativePath) && !ignoredFileReason(entry.relativePath),
+          )
+          .map((entry) => ({
+            path: entry.relativePath,
+            code: indexable(entry.relativePath) ? 'DOCUMENT_LIMIT' : 'UNSUPPORTED_FORMAT',
+            reason: indexable(entry.relativePath)
+              ? 'Limite de 300 fichiers compatibles atteinte.'
+              : 'Format non pris en charge pour l’indexation.',
+          }));
+        exclusions.push(
+          ...(
+            former?.exclusions ??
+            former?.skippedPaths?.map((path) => ({
+              path,
+              code: 'UNKNOWN_LEGACY',
+              reason: 'Exclusion de l’ancien index : raison non enregistrée.',
+            })) ??
+            []
+          ).filter((entry) => retained.has(entry.path)),
+        );
+        const manifest: Manifest = {
+          schemaVersion: 3,
+          policyVersion: INDEX_POLICY_VERSION,
+          corpus,
+          embeddingModel,
+          indexedAt: startedAt,
+          documents: former?.documents.filter((entry) => retained.has(entry.relativePath)) ?? [],
+          skippedPaths: exclusions.map((entry) => entry.path),
+          exclusions,
+        };
+        if (incremental) {
+          manifest.storageName = 'storage-' + randomUUID();
+          await cp(
+            this.storagePath(workspace.id, former),
+            this.storagePath(workspace.id, manifest),
+            { recursive: true },
+          );
+          const removedIds = former.documents
+            .filter((entry) => !retained.has(entry.relativePath))
+            .flatMap((entry) => entry.indexDocumentIds);
+          if (removedIds.length)
+            await provider.update(
+              [],
+              removedIds,
+              this.storagePath(workspace.id, manifest),
+              () => checkCancelled(),
+              onPhase,
+            );
+        }
+        checkpoint = { signature, manifest, completed: unchanged, startedAt };
+        await atomicJson(pendingPath, checkpoint);
       }
-
-      const extracted = await extractDocuments(
-        workspace,
-        this.configuration.embeddingModel,
-        corpus,
+      updateStatus({
+        totalFiles: eligible.length,
+        processedFiles: checkpoint.completed.length,
+        indexedDocuments: checkpoint.manifest.documents.length,
+        skippedDocuments: checkpoint.manifest.skippedPaths.length,
+        startedAt: checkpoint.startedAt,
+        resumable: true,
+      });
+      const remaining = eligible.filter(
+        (entry) => !checkpoint.completed.includes(entry.relativePath),
       );
-      if (!extracted.documents.length)
+      // Publish a new generation only after both its vectors and checkpoint are saved.
+      // An interrupted generation is never referenced, so retry cannot duplicate fragments.
+      while (remaining.length) {
+        checkCancelled();
+        const batchStartedAt = Date.now();
+        const batch: CorpusEntry[] = [];
+        const documents: RagDocument[] = [];
+        const entries: ManifestEntry[] = [];
+        const exclusions: IndexReport['notIndexed'] = [];
+        let characters = 0;
+        let indexedCharacters = checkpoint.manifest.documents.reduce(
+          (sum, entry) => sum + entry.textCharacters,
+          0,
+        );
+        while (remaining.length && batch.length < 10 && characters < 2_000_000) {
+          checkCancelled();
+          const entry = remaining.shift()!;
+          updateStatus({ phase: 'extraction', currentFile: entry.relativePath });
+          const extracted = await extractDocuments(workspace, embeddingModel, [entry]);
+          const extractedCharacters = extracted.documents.reduce(
+            (sum, document) => sum + document.text.length,
+            0,
+          );
+          if (indexedCharacters + extractedCharacters > PRODUCT_LIMITS.indexCharacters) {
+            exclusions.push({
+              path: entry.relativePath,
+              code: 'INDEX_TEXT_LIMIT',
+              reason:
+                'Fichier non indexé : son texte dépasserait le plafond total de 3 millions de caractères du dossier.',
+            });
+            batch.push(entry);
+            updateStatus({ processedFiles: checkpoint.completed.length + batch.length });
+            continue;
+          }
+          indexedCharacters += extractedCharacters;
+          documents.push(...extracted.documents);
+          entries.push(...extracted.manifest.documents);
+          exclusions.push(...(extracted.manifest.exclusions ?? []));
+          characters += extracted.documents.reduce(
+            (sum, document) => sum + document.text.length,
+            0,
+          );
+          batch.push(entry);
+          updateStatus({ processedFiles: checkpoint.completed.length + batch.length });
+        }
+        checkCancelled();
+        const next: Manifest = {
+          ...checkpoint.manifest,
+          documents: [...checkpoint.manifest.documents, ...entries],
+          exclusions: [...(checkpoint.manifest.exclusions ?? []), ...exclusions],
+          skippedPaths: [
+            ...checkpoint.manifest.skippedPaths,
+            ...exclusions.map((entry) => entry.path),
+          ],
+        };
+        if (documents.length) {
+          next.storageName = 'storage-' + randomUUID();
+          const progress = (done: number, total: number) => {
+            checkCancelled();
+            updateStatus({
+              phase: 'embeddings',
+              currentFile: undefined,
+              progress: total ? done / total : 0,
+            });
+          };
+          updateStatus({ phase: 'embeddings', currentFile: undefined, progress: 0 });
+          if (checkpoint.manifest.storageName) {
+            await cp(
+              this.storagePath(workspace.id, checkpoint.manifest),
+              this.storagePath(workspace.id, next),
+              { recursive: true },
+            );
+            await provider.update(
+              documents,
+              [],
+              this.storagePath(workspace.id, next),
+              progress,
+              onPhase,
+            );
+          } else
+            await provider.build(
+              documents,
+              this.storagePath(workspace.id, next),
+              progress,
+              onPhase,
+            );
+        }
+        checkCancelled();
+        updateStatus({ phase: 'saving' });
+        checkpoint = {
+          ...checkpoint,
+          manifest: next,
+          completed: [...checkpoint.completed, ...batch.map((entry) => entry.relativePath)],
+        };
+        await atomicJson(pendingPath, checkpoint);
+        await this.options.logger.info('rag.batch.saved', {
+          workspaceId: workspace.id,
+          processedFiles: checkpoint.completed.length,
+          totalFiles: eligible.length,
+          indexedFiles: next.documents.length,
+          durationMs: Date.now() - batchStartedAt,
+        });
+        updateStatus({
+          indexedDocuments: next.documents.length,
+          skippedDocuments: next.skippedPaths.length,
+        });
+        await this.cleanGenerations(workspace.id, [former?.storageName, next.storageName]);
+      }
+      checkCancelled();
+      const completedAt = new Date().toISOString();
+      const report: IndexReport = {
+        workspaceId: workspace.id,
+        startedAt: checkpoint.startedAt,
+        completedAt,
+        durationMs: Date.parse(completedAt) - Date.parse(checkpoint.startedAt),
+        totalFiles: corpus.length,
+        indexedFiles: checkpoint.manifest.documents.map((entry) => entry.relativePath).sort(),
+        notIndexed: checkpoint.manifest.exclusions ?? [],
+        notes: [
+          'Les durées incluent les interruptions et reprises.',
+          'Les images sont indexées uniquement par leurs métadonnées de fichier : nom, chemin relatif, format, taille et modification. Aucun OCR ni analyse visuelle ; les données EXIF ne sont pas extraites.',
+          'Plafonds : 300 fichiers compatibles, 2 Mio par texte, 20 Mio par PDF/Word/Excel, 100 pages par PDF, 10 feuilles par classeur, 100 000 caractères par feuille et 3 millions de caractères au total. Les fichiers hors limites sont exclus entièrement et restent visibles dans l’arborescence.',
+        ],
+      };
+      await atomicJson(join(this.root(workspace.id), 'report.json'), report);
+      if (!checkpoint.manifest.documents.length)
         throw new RagError(
           'INDEX_BUILD_FAILED',
-          'Aucun document compatible et lisible n’a été trouvé.',
+          'Aucun document compatible et lisible n’a été trouvé. Consultez le rapport.',
           422,
         );
-      await rm(storageDir, { recursive: true, force: true });
-      await this.provider.build(extracted.documents, storageDir, (done, total) =>
-        this.statuses.set(workspace.id, {
-          ...base,
-          indexedDocuments: extracted.manifest.documents.length,
-          skippedDocuments: extracted.manifest.skippedPaths.length,
-          progress: total ? done / total : 0,
-        }),
-      );
-      await atomicJson(this.manifestPath(workspace.id), extracted.manifest);
+      const manifest = { ...checkpoint.manifest, indexedAt: completedAt, report };
+      updateStatus({ phase: 'saving', currentFile: undefined });
+      await atomicJson(this.manifestPath(workspace.id), manifest);
+      await rm(pendingPath, { force: true });
+      await this.cleanGenerations(workspace.id, [manifest.storageName]);
       const ready: RagStatus = {
-        ...base,
+        ...this.statuses.get(workspace.id)!,
         status: 'ready',
-        indexedDocuments: extracted.manifest.documents.length,
-        skippedDocuments: extracted.manifest.skippedPaths.length,
+        phase: undefined,
         progress: 1,
-        lastIndexedAt: extracted.manifest.indexedAt,
+        lastIndexedAt: completedAt,
+        resumable: false,
       };
       this.statuses.set(workspace.id, ready);
       await this.options.logger.info('rag.indexed', {
@@ -791,107 +1168,35 @@ export class RagService {
       });
       return ready;
     } catch (error) {
+      const safe = publicMessage(error, 'indexing');
+      updateStatus({
+        status: 'error',
+        currentFile: undefined,
+        error: safe.message,
+        resumable: await pathExists(pendingPath),
+      });
       await this.options.logger.error('rag.build.failed', {
         workspaceId: workspace.id,
         ...errorDiagnostic(error),
       });
-      const safe = publicMessage(error);
-      const failed = { ...base, status: 'error' as const, error: safe.message };
-      this.statuses.set(workspace.id, failed);
       throw safe;
     }
   }
-  private async updateIndex(
-    workspace: WorkspaceRecord,
-    former: Manifest,
-    corpus: CorpusEntry[],
-    storageDir: string,
-    base: RagStatus,
-  ): Promise<RagStatus> {
-    const formerCorpus = new Map(former.corpus.map((entry) => [entry.relativePath, entry]));
-    const currentPaths = new Set(corpus.map((entry) => entry.relativePath));
-    const changedCorpus = corpus.filter((entry) => {
-      const previous = formerCorpus.get(entry.relativePath);
-      return !previous || previous.size !== entry.size || previous.modifiedAt !== entry.modifiedAt;
-    });
-    const affectedPaths = new Set(changedCorpus.map((entry) => entry.relativePath));
-    for (const entry of former.corpus) {
-      if (!currentPaths.has(entry.relativePath)) affectedPaths.add(entry.relativePath);
+  private async cleanGenerations(
+    workspaceId: string,
+    keep: Array<string | undefined>,
+  ): Promise<void> {
+    const { readdir } = await import('node:fs/promises');
+    for (const name of await readdir(this.root(workspaceId))) {
+      if (/^storage-[a-f0-9-]{36}$/.test(name) && !keep.includes(name)) {
+        await rm(join(this.root(workspaceId), name), { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+      }
     }
-
-    if (!affectedPaths.size) {
-      const ready = { ...base, status: 'ready' as const, progress: 1 };
-      this.statuses.set(workspace.id, ready);
-      return ready;
-    }
-
-    const extracted = await extractDocuments(
-      workspace,
-      this.configuration.embeddingModel,
-      changedCorpus,
-    );
-    const removedDocumentIds = former.documents
-      .filter((entry) => affectedPaths.has(entry.relativePath))
-      .flatMap((entry) => entry.indexDocumentIds);
-    const retainedDocuments = former.documents.filter(
-      (entry) => !affectedPaths.has(entry.relativePath),
-    );
-    const documentByPath = new Map(
-      [...retainedDocuments, ...extracted.manifest.documents].map((entry) => [
-        entry.relativePath,
-        entry,
-      ]),
-    );
-    const documents = corpus.flatMap((entry) => {
-      const document = documentByPath.get(entry.relativePath);
-      return document ? [document] : [];
-    });
-    const retainedSkipped = former.skippedPaths.filter((path) => !affectedPaths.has(path));
-    const skippedSet = new Set([...retainedSkipped, ...extracted.manifest.skippedPaths]);
-    const indexedAt = new Date().toISOString();
-    const manifest: Manifest = {
-      schemaVersion: 3,
-      documents,
-      corpus,
-      skippedPaths: corpus
-        .map((entry) => entry.relativePath)
-        .filter((path) => skippedSet.has(path)),
-      indexedAt,
-      embeddingModel: this.configuration.embeddingModel,
-    };
-
-    await this.provider!.update(
-      extracted.documents,
-      removedDocumentIds,
-      storageDir,
-      (done, total) =>
-        this.statuses.set(workspace.id, {
-          ...base,
-          indexedDocuments: manifest.documents.length,
-          skippedDocuments: manifest.skippedPaths.length,
-          progress: total ? done / total : 0,
-        }),
-    );
-    await atomicJson(this.manifestPath(workspace.id), manifest);
-    const ready: RagStatus = {
-      ...base,
-      status: 'ready',
-      indexedDocuments: manifest.documents.length,
-      skippedDocuments: manifest.skippedPaths.length,
-      progress: 1,
-      lastIndexedAt: indexedAt,
-    };
-    this.statuses.set(workspace.id, ready);
-    await this.options.logger.info('rag.index.updated', {
-      workspaceId: workspace.id,
-      changed: changedCorpus.length,
-      removed: [...affectedPaths].filter((path) => !currentPaths.has(path)).length,
-      documents: ready.indexedDocuments,
-      skipped: ready.skippedDocuments,
-    });
-    return ready;
   }
   async deleteIndex(workspaceId: string): Promise<void> {
+    await this.cancel(workspaceId);
     await rm(this.root(workspaceId), { recursive: true, force: true });
     this.statuses.delete(workspaceId);
   }
@@ -901,7 +1206,13 @@ export class RagService {
     if (!this.provider)
       throw new RagError('OPENAI_KEY_MISSING', 'Ajoutez une clé OpenAI dans les paramètres.', 409);
     await this.ensureFresh(workspace);
-    return this.provider.query(join(this.root(workspace.id), 'storage'), question);
+    return this.provider.query(
+      this.storagePath(
+        workspace.id,
+        await readJson<Manifest | null>(this.manifestPath(workspace.id), null),
+      ),
+      question,
+    );
   }
   async listIndicators(workspaceId: string): Promise<Indicator[]> {
     return (await this.allIndicators()).filter((item) => item.workspaceId === workspaceId);
@@ -990,7 +1301,10 @@ export class RagService {
           409,
         );
       const answer = await this.provider.query(
-        join(this.root(workspace.id), 'storage'),
+        this.storagePath(
+          workspace.id,
+          await readJson<Manifest | null>(this.manifestPath(workspace.id), null),
+        ),
         former.query,
         {
           key: former.selectedFieldKey,

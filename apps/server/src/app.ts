@@ -6,6 +6,11 @@ import WordExtractor from 'word-extractor';
 import * as XLSX from 'xlsx';
 import {
   API_SCHEMA_VERSION,
+  IMAGE_MIME_TYPES,
+  indexingSizeWarning,
+  PRODUCT_LIMITS,
+  MAX_TEXT_BYTES,
+  MAX_PREVIEW_BYTES,
   CreateIndicatorRequestSchema,
   ListQuerySchema,
   PreviewRequestSchema,
@@ -22,10 +27,17 @@ import {
   type WorkspaceRecord,
   type RagConfiguration,
 } from '@docsteward/contracts';
-import { FsPolicyError, listDirectory, readPreviewFile } from '@docsteward/filesystem-policy';
+import {
+  FsPolicyError,
+  listDirectory,
+  readPreviewFile,
+  readFileMetadata,
+  decodeDocumentText,
+} from '@docsteward/filesystem-policy';
 import type { SafeLogger } from './logger';
-import { RagError, RagService, type RagProvider } from './rag';
+import { RagError, RagService, formatIndexReport, type RagProvider } from './rag';
 import { OpenAISorterProvider, SorterError, SorterService, type SorterProvider } from './sorter';
+import { getPdfPageCount } from './document-text';
 
 const CSP = [
   "default-src 'self'",
@@ -137,16 +149,32 @@ async function createPreview(
 ): Promise<PreviewResult> {
   const extension = extname(path).toLowerCase();
   const common = commonPreviewFields(file);
-  if (extension === '.pdf') return { kind: 'pdf', ...common };
+  if (extension === '.pdf') {
+    const pages = await getPdfPageCount(file.bytes).catch(() => undefined);
+    return {
+      kind: 'pdf',
+      ...common,
+      ...(pages && pages > PRODUCT_LIMITS.pdfPages
+        ? {
+            indexingWarning: `PDF non indexé : ${pages} pages, maximum ${PRODUCT_LIMITS.pdfPages}.`,
+          }
+        : {}),
+    };
+  }
+  if (IMAGE_MIME_TYPES[extension]) return { kind: 'image', ...common };
   if (textExtensions.has(extension)) {
     try {
       return {
         kind: 'text',
-        content: new TextDecoder('utf-8', { fatal: true }).decode(file.bytes),
+        content: decodeDocumentText(file.bytes),
         ...common,
       };
     } catch {
-      throw new FsPolicyError('INVALID_UTF8', 'Le fichier n’est pas encodé en UTF-8.', 415);
+      throw new FsPolicyError(
+        'INVALID_UTF8',
+        'Le fichier contient des données binaires ou un encodage non pris en charge.',
+        415,
+      );
     }
   }
   if (extension === '.doc' || extension === '.docx') {
@@ -172,7 +200,27 @@ async function createPreview(
       truncated,
     };
   });
-  return { kind: 'spreadsheet', sheets, ...common };
+  const longSheet = workbook.SheetNames.slice(0, PRODUCT_LIMITS.workbookSheets).find((name) => {
+    const sheet = workbook.Sheets[name];
+    return (
+      sheet &&
+      XLSX.utils.sheet_to_csv(sheet, { blankrows: false }).length > PRODUCT_LIMITS.sheetCharacters
+    );
+  });
+  return {
+    kind: 'spreadsheet',
+    sheets,
+    ...common,
+    ...(workbook.SheetNames.length > PRODUCT_LIMITS.workbookSheets
+      ? {
+          indexingWarning: `Classeur non indexé : ${workbook.SheetNames.length} feuilles, maximum ${PRODUCT_LIMITS.workbookSheets}.`,
+        }
+      : longSheet
+        ? {
+            indexingWarning: `Classeur non indexé : la feuille « ${longSheet} » dépasse ${PRODUCT_LIMITS.sheetCharacters.toLocaleString('fr-FR')} caractères.`,
+          }
+        : {}),
+  };
 }
 
 export function createServer(options: ServerOptions): {
@@ -287,6 +335,37 @@ export function createServer(options: ServerOptions): {
     if (!parsed.success)
       return reply.code(400).send(failure('INVALID_REQUEST', 'Espace de travail invalide.'));
     return success(await rag.build(workspaceOrThrow(workspaceState, parsed.data.workspaceId)));
+  });
+
+  app.get('/api/rag/report', async (request, reply) => {
+    const parsed = WorkspaceIdSchema.safeParse(request.query);
+    if (!parsed.success)
+      return reply.code(400).send(failure('INVALID_REQUEST', 'Espace de travail invalide.'));
+    workspaceOrThrow(workspaceState, parsed.data.workspaceId);
+    return success(await rag.report(parsed.data.workspaceId));
+  });
+
+  app.post('/api/rag/cancel', async (request, reply) => {
+    const parsed = WorkspaceIdSchema.safeParse(request.body);
+    if (!parsed.success)
+      return reply.code(400).send(failure('INVALID_REQUEST', 'Espace de travail invalide.'));
+    workspaceOrThrow(workspaceState, parsed.data.workspaceId);
+    await rag.cancel(parsed.data.workspaceId);
+    return success({ cancelled: true });
+  });
+
+  app.get('/api/rag/report/download', async (request, reply) => {
+    const parsed = WorkspaceIdSchema.safeParse(request.query);
+    if (!parsed.success)
+      return reply.code(400).send(failure('INVALID_REQUEST', 'Espace de travail invalide.'));
+    workspaceOrThrow(workspaceState, parsed.data.workspaceId);
+    const report = await rag.report(parsed.data.workspaceId);
+    if (!report)
+      return reply.code(404).send(failure('REPORT_NOT_FOUND', 'Aucun rapport disponible.'));
+    return reply
+      .header('Content-Disposition', 'attachment; filename="rapport-indexation.txt"')
+      .type('text/plain; charset=utf-8')
+      .send(formatIndexReport(report));
   });
 
   app.delete('/api/rag/index/:workspaceId', async (request, reply) => {
@@ -438,8 +517,27 @@ export function createServer(options: ServerOptions): {
       return reply.code(400).send(failure('INVALID_REQUEST', 'Demande d’aperçu invalide.'));
     }
     const workspace = workspaceOrThrow(workspaceState, parsed.data.workspaceId);
+    const metadata = await readFileMetadata(workspace.rootPath, parsed.data.path);
+    const exclusion = (await rag.report(workspace.id))?.notIndexed.find(
+      (entry) => entry.path === parsed.data.path,
+    );
+    const indexingWarning =
+      indexingSizeWarning(parsed.data.path, metadata.size) ??
+      (exclusion ? `Lors de la dernière indexation : ${exclusion.reason}` : undefined);
+    const previewLimit = textExtensions.has(extname(parsed.data.path).toLowerCase())
+      ? MAX_TEXT_BYTES
+      : MAX_PREVIEW_BYTES;
+    if (metadata.size > previewLimit)
+      return success<PreviewResult>({
+        kind: 'unavailable',
+        ...metadata,
+        sha256: '',
+        ...(indexingWarning ? { indexingWarning } : {}),
+        reason: `Aperçu indisponible : ce fichier dépasse ${previewLimit / (1024 * 1024)} Mio. Il reste visible dans l’arborescence.`,
+      });
     const file = await readPreviewFile(workspace.rootPath, parsed.data.path);
-    return success(await createPreview(parsed.data.path, file));
+    const preview = await createPreview(parsed.data.path, file);
+    return success({ ...preview, indexingWarning: indexingWarning ?? preview.indexingWarning });
   });
 
   app.get('/api/fs/raw', async (request, reply) => {
@@ -449,10 +547,16 @@ export function createServer(options: ServerOptions): {
     }
     const workspace = workspaceOrThrow(workspaceState, parsed.data.workspaceId);
     const file = await readPreviewFile(workspace.rootPath, parsed.data.path);
-    if (extname(parsed.data.path).toLowerCase() !== '.pdf') {
+    const extension = extname(parsed.data.path).toLowerCase();
+    const mime = extension === '.pdf' ? 'application/pdf' : IMAGE_MIME_TYPES[extension];
+    if (!mime) {
       return reply.code(415).send(failure('FILE_TYPE_NOT_ALLOWED', 'Aperçu brut non autorisé.'));
     }
-    return reply.type('application/pdf').header('Content-Length', file.size).send(file.bytes);
+    return reply
+      .type(mime)
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Length', file.size)
+      .send(file.bytes);
   });
 
   app.setErrorHandler(async (error, _request, reply) => {

@@ -8,6 +8,8 @@ import {
   readPreviewFile,
   resolveWithinRoot,
   sha256,
+  listDirectory,
+  decodeDocumentText,
 } from '@docsteward/filesystem-policy';
 
 describe('filesystem policy', () => {
@@ -32,8 +34,8 @@ describe('filesystem policy', () => {
 
   it('refuse les extensions non autorisées et les liens symboliques', async () => {
     const root = await mkdtemp(join(tmpdir(), 'docsteward-policy-'));
-    await writeFile(join(root, 'photo.png'), 'not really a png');
-    await expect(readPreviewFile(root, 'photo.png')).rejects.toMatchObject({
+    await writeFile(join(root, 'archive.epub'), 'not supported');
+    await expect(readPreviewFile(root, 'archive.epub')).rejects.toMatchObject({
       code: 'FILE_TYPE_NOT_ALLOWED',
     });
     const outside = await mkdtemp(join(tmpdir(), 'docsteward-outside-'));
@@ -42,6 +44,34 @@ describe('filesystem policy', () => {
     await expect(readPreviewFile(root, 'link/outside.pdf')).rejects.toMatchObject({
       code: 'SYMLINK_NOT_ALLOWED',
     });
+  });
+
+  it('ignore les fichiers temporaires dans le listing et refuse leur lecture directe', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'docsteward-temporary-'));
+    for (const name of [
+      '~$contrat.docx',
+      '~WRL0005.tmp',
+      'copie.TXT.bak',
+      'recuperation.asd',
+      'contrat.txt',
+    ])
+      await writeFile(join(root, name), 'Bonjour');
+    expect((await listDirectory(root)).map((entry) => entry.name)).toEqual(['contrat.txt']);
+    await expect(readPreviewFile(root, '~$contrat.docx')).rejects.toMatchObject({
+      code: 'FILE_TYPE_NOT_ALLOWED',
+    });
+  });
+
+  it('décode les textes Windows sans modifier leur contenu et refuse les données binaires', () => {
+    expect(decodeDocumentText(Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x20, 0x80]))).toBe('café €');
+    expect(
+      decodeDocumentText(
+        Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('Contrat été', 'utf16le')]),
+      ),
+    ).toBe('Contrat été');
+    expect(decodeDocumentText(Buffer.from([0xfe, 0xff, 0x00, 0xe9]))).toBe('é');
+    expect(decodeDocumentText(Buffer.from('Été', 'utf8'))).toBe('Été');
+    expect(() => decodeDocumentText(Buffer.from([0x00, 0xff]))).toThrow(FsPolicyError);
   });
 
   it('lit les formats de prévisualisation sans modifier le fichier', async () => {

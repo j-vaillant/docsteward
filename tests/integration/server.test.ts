@@ -8,7 +8,7 @@ import { createServer } from '../../apps/server/src/app';
 import type { SafeLogger } from '../../apps/server/src/logger';
 import type { RagProvider, RagService } from '../../apps/server/src/rag';
 import type { SorterProvider } from '../../apps/server/src/sorter';
-import type { FileEntry, RagAnswer } from '@docsteward/contracts';
+import type { FileEntry, RagAnswer, VirtualTree } from '@docsteward/contracts';
 
 const logger: SafeLogger = {
   info: () => Promise.resolve(),
@@ -107,6 +107,51 @@ afterEach(async () => {
 });
 
 describe('local server', () => {
+  it('garde les fichiers hors limites visibles et prévisualisables avec un avertissement et une exclusion dans le rapport', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000001';
+    await writeFile(join(root, 'grand.txt'), 'a'.repeat(2 * 1024 * 1024 + 1));
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/fs/preview',
+      headers: auth,
+      payload: { workspaceId, path: 'grand.txt' },
+    });
+    expect(preview.statusCode).toBe(200);
+    const data = preview.json<{
+      data: { kind: string; content: string; indexingWarning: string };
+    }>().data;
+    expect(data).toMatchObject({
+      kind: 'text',
+      indexingWarning: expect.stringContaining('2 Mio') as unknown,
+    });
+    expect(data.content).toHaveLength(2 * 1024 * 1024 + 1);
+    await rag.setEnabled(workspaceId, true);
+    await rag.build({ id: workspaceId, rootPath: root, displayName: 'Test', access: 'read-only' });
+    expect((await rag.report(workspaceId))?.notIndexed).toContainEqual(
+      expect.objectContaining({ path: 'grand.txt', code: 'FILE_TOO_LARGE' }),
+    );
+    const listing = await app.inject({
+      method: 'GET',
+      url: `/api/fs/list?workspaceId=${workspaceId}`,
+      headers: auth,
+    });
+    expect(listing.json<{ data: FileEntry[] }>().data).toContainEqual(
+      expect.objectContaining({ path: 'grand.txt' }),
+    );
+    await writeFile(join(root, 'immense.txt'), 'a'.repeat(5 * 1024 * 1024 + 1));
+    const unavailable = await app.inject({
+      method: 'POST',
+      url: '/api/fs/preview',
+      headers: auth,
+      payload: { workspaceId, path: 'immense.txt' },
+    });
+    expect(unavailable.statusCode).toBe(200);
+    expect(unavailable.json<{ data: unknown }>().data).toMatchObject({
+      kind: 'unavailable',
+      indexingWarning: expect.stringContaining('2 Mio') as unknown,
+    });
+  });
+
   it('charge la navigation sans lire les documents ni inventorier les sous-dossiers', async () => {
     const workspaceId = '00000000-0000-4000-8000-000000000001';
     const nested = join(root, 'écrits');
@@ -274,6 +319,64 @@ describe('local server', () => {
     expect(pdf.headers['content-security-policy']).toContain("frame-ancestors 'self'");
   });
 
+  it('sert les images pour leur aperçu et masque les fichiers temporaires, y compris en accès direct', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000001';
+    const bytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jA7sAAAAASUVORK5CYII=',
+      'base64',
+    );
+    await writeFile(join(root, 'image.png'), bytes);
+    await writeFile(join(root, '~$contrat.docx'), 'temporaire');
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/api/fs/list?workspaceId=${workspaceId}`,
+      headers: auth,
+    });
+    expect(listed.json<{ data: FileEntry[] }>().data.map((item) => item.name)).toEqual([
+      'image.png',
+      'notes.md',
+    ]);
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/fs/preview',
+      headers: auth,
+      payload: { workspaceId, path: 'image.png' },
+    });
+    expect(preview.json()).toMatchObject({ ok: true, data: { kind: 'image' } });
+    const raw = await app.inject({
+      method: 'GET',
+      url: `/api/fs/raw?workspaceId=${workspaceId}&path=image.png`,
+      headers: auth,
+    });
+    expect(raw.headers['content-type']).toBe('image/png');
+    expect(raw.rawPayload).toEqual(bytes);
+    const temporary = await app.inject({
+      method: 'POST',
+      url: '/api/fs/preview',
+      headers: auth,
+      payload: { workspaceId, path: '~$contrat.docx' },
+    });
+    expect(temporary.json()).toMatchObject({ ok: false, error: { code: 'FILE_TYPE_NOT_ALLOWED' } });
+  });
+
+  it('prévisualise les textes Windows-1252 et UTF-16 avec BOM sans modifier leurs octets', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000001';
+    for (const bytes of [
+      Buffer.from([0x63, 0x61, 0x66, 0xe9]),
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('café', 'utf16le')]),
+    ]) {
+      await writeFile(join(root, 'ancien.txt'), bytes);
+      const preview = await app.inject({
+        method: 'POST',
+        url: '/api/fs/preview',
+        headers: auth,
+        payload: { workspaceId, path: 'ancien.txt' },
+      });
+      expect(preview.json()).toMatchObject({ ok: true, data: { kind: 'text', content: 'café' } });
+      expect(await readFile(join(root, 'ancien.txt'))).toEqual(bytes);
+    }
+  });
+
   it('refuse la sortie du workspace', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -312,6 +415,51 @@ describe('local server', () => {
       headers: auth,
     });
     expect(status.json()).toMatchObject({ ok: true, data: { status: 'stale' } });
+  });
+
+  it('protège le rapport d’indexation et le restitue avec les exclusions', async () => {
+    const workspaceId = '00000000-0000-4000-8000-000000000001';
+    await writeFile(join(root, 'vide.txt'), '');
+    await rag.setEnabled(workspaceId, true);
+    await app.inject({
+      method: 'POST',
+      url: '/api/rag/index',
+      headers: auth,
+      payload: { workspaceId },
+    });
+    const report = await app.inject({
+      method: 'GET',
+      url: `/api/rag/report?workspaceId=${workspaceId}`,
+      headers: auth,
+    });
+    expect(report.json()).toMatchObject({
+      ok: true,
+      data: {
+        totalFiles: 2,
+        indexedFiles: ['notes.md'],
+        notIndexed: [{ path: 'vide.txt', code: 'NO_TEXT' }],
+      },
+    });
+    const download = await app.inject({
+      method: 'GET',
+      url: `/api/rag/report/download?workspaceId=${workspaceId}`,
+      headers: auth,
+    });
+    expect(download.headers['content-disposition']).toContain('rapport-indexation.txt');
+    expect(download.body).toContain('vide.txt — Aucun texte exploitable');
+    expect(
+      (await app.inject({ method: 'GET', url: `/api/rag/report?workspaceId=${workspaceId}` }))
+        .statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/rag/report?workspaceId=00000000-0000-4000-8000-000000000099',
+          headers: auth,
+        })
+      ).statusCode,
+    ).toBe(404);
   });
 
   it('applique les ajouts, modifications et suppressions sans reconstruire tout l’index', async () => {
@@ -379,9 +527,12 @@ describe('local server', () => {
       payload: { workspaceId, question: 'Que contient ce dossier ?' },
     });
     expect(build).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledTimes(3);
-    expect(update.mock.calls[2]?.[0]).toHaveLength(1);
+    expect(update).toHaveBeenCalledTimes(4);
+    // Removal and insertion are prepared in the unpublished generation.
+    expect(update.mock.calls[2]?.[0]).toHaveLength(0);
     expect(update.mock.calls[2]?.[1]).toHaveLength(1);
+    expect(update.mock.calls[3]?.[0]).toHaveLength(1);
+    expect(update.mock.calls[3]?.[1]).toHaveLength(0);
   });
 
   it('indexe, interroge et persiste un indicateur avec un fournisseur déterministe', async () => {
@@ -636,6 +787,18 @@ describe('local server', () => {
       payload: { workspaceId, inventoryFingerprint: fingerprint },
     });
 
+    // Simulate an organization saved before temporary files were filtered.
+    const path = join(dataPath, 'sorter', 'organizations.json');
+    const stored = JSON.parse(await readFile(path, 'utf8')) as { organizations: VirtualTree[] };
+    const organization = stored.organizations[0]!;
+    organization.entries.push({
+      ...organization.entries[0]!,
+      documentId: 'temporary-document',
+      physicalRelativePath: '~$contrat.docx',
+      virtualPath: 'Classement/temporaire.docx',
+    });
+    await writeFile(path, JSON.stringify(stored));
+
     const restarted = createServer({
       secret,
       rendererPath: root,
@@ -658,6 +821,7 @@ describe('local server', () => {
           status: 'active',
           instruction: 'Classe les documents par sujet.',
           entries: [{ virtualPath: 'Classement/notes.md' }],
+          summary: { documents: 1 },
         },
       });
     } finally {

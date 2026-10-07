@@ -1,5 +1,8 @@
 import WordExtractor from 'word-extractor';
 import * as XLSX from 'xlsx';
+import { decodeDocumentText } from '@docsteward/filesystem-policy';
+import { PRODUCT_LIMITS } from '@docsteward/contracts';
+import { DocumentLimitError } from './product-limits';
 
 export type ExtractedTextPart = {
   part: string;
@@ -7,6 +10,11 @@ export type ExtractedTextPart = {
   page?: number;
   sheet?: string;
 };
+
+export async function getPdfPageCount(bytes: Uint8Array): Promise<number> {
+  const pdf = await import('./pdf-extractor');
+  return pdf.getPdfPageCount(bytes);
+}
 
 export async function extractPdfPages(
   bytes: Uint8Array,
@@ -33,13 +41,24 @@ export async function extractTextParts(
       cellFormula: false,
       cellHTML: false,
     });
-    return workbook.SheetNames.slice(0, 20).flatMap((sheetName) => {
+    if (workbook.SheetNames.length > PRODUCT_LIMITS.workbookSheets)
+      throw new DocumentLimitError(
+        'SHEET_LIMIT',
+        `Classeur non indexé : ${workbook.SheetNames.length} feuilles, maximum ${PRODUCT_LIMITS.workbookSheets}.`,
+      );
+    return workbook.SheetNames.flatMap((sheetName) => {
       const sheet = workbook.Sheets[sheetName];
+      const text = sheet ? XLSX.utils.sheet_to_csv(sheet, { blankrows: false }) : '';
+      if (text.length > PRODUCT_LIMITS.sheetCharacters)
+        throw new DocumentLimitError(
+          'SHEET_TEXT_LIMIT',
+          `Classeur non indexé : la feuille « ${sheetName} » dépasse ${PRODUCT_LIMITS.sheetCharacters.toLocaleString('fr-FR')} caractères.`,
+        );
       return sheet
         ? [
             {
               part: `sheet:${sheetName}`,
-              text: XLSX.utils.sheet_to_csv(sheet, { blankrows: false }).slice(0, 500_000),
+              text,
               sheet: sheetName,
             },
           ]
@@ -58,7 +77,7 @@ export async function extractTextParts(
   return [
     {
       part: 'document',
-      text: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+      text: decodeDocumentText(bytes),
     },
   ];
 }

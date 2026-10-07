@@ -4,6 +4,47 @@ export const PROTOCOL_VERSION = 1 as const;
 export const API_SCHEMA_VERSION = 1 as const;
 export const MAX_TEXT_BYTES = 5 * 1024 * 1024;
 export const MAX_PREVIEW_BYTES = 50 * 1024 * 1024;
+export const PRODUCT_LIMITS = {
+  indexedDocuments: 300,
+  sortedDocuments: 200,
+  textBytes: 2 * 1024 * 1024,
+  documentBytes: 20 * 1024 * 1024,
+  pdfPages: 100,
+  workbookSheets: 10,
+  sheetCharacters: 100_000,
+  indexCharacters: 3_000_000,
+} as const;
+
+export function indexingSizeWarning(path: string, size: number): string | undefined {
+  const extension = '.' + (path.split('.').at(-1) ?? '').toLowerCase();
+  // Images contribute only file metadata; their binary size does not affect indexing.
+  if (IMAGE_MIME_TYPES[extension]) return undefined;
+  const text = (ALLOWED_TEXT_EXTENSIONS as readonly string[]).includes(extension);
+  const limit = text ? PRODUCT_LIMITS.textBytes : PRODUCT_LIMITS.documentBytes;
+  return size > limit
+    ? `Fichier non indexé : taille supérieure à ${limit / (1024 * 1024)} Mio.`
+    : undefined;
+}
+export const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+};
+
+export function ignoredFileReason(path: string): string | undefined {
+  const name = (path.split('/').at(-1) ?? '').toLowerCase();
+  if (name.startsWith('~$') || /\.(tmp|asd)$/.test(name))
+    return 'Fichier temporaire ou de récupération Office.';
+  if (/\.(bak|backup)$/.test(name) || name.endsWith('~')) return 'Copie de sauvegarde.';
+  if (/\.(lnk|bat|cmd|joboptions|dot|dotx|dotm)$/.test(name))
+    return 'Raccourci, script, réglage ou modèle technique.';
+  if (['thumbs.db', 'desktop.ini', '.ds_store'].includes(name))
+    return 'Fichier technique du système.';
+  return undefined;
+}
 export const ALLOWED_TEXT_EXTENSIONS = [
   '.txt',
   '.md',
@@ -24,6 +65,12 @@ export const ALLOWED_PREVIEW_EXTENSIONS = [
   '.docx',
   '.xls',
   '.xlsx',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
+  '.bmp',
 ] as const;
 
 export const WorkspaceRecordSchema = z.object({
@@ -71,7 +118,7 @@ export type Settings = z.infer<typeof SettingsSchema>;
 export const RagConfigurationSchema = z.object({
   generationModel: z.string().min(1),
   embeddingModel: z.string().min(1),
-  similarityTopK: z.number().int().min(1).max(12),
+  similarityTopK: z.number().int().min(1).max(5),
 });
 export type RagConfiguration = z.infer<typeof RagConfigurationSchema>;
 
@@ -257,8 +304,26 @@ export const RagStatusSchema = z.object({
   progress: z.number().min(0).max(1).optional(),
   lastIndexedAt: z.string().datetime().nullable(),
   error: z.string().max(500).optional(),
+  phase: z.enum(['inventory', 'extraction', 'embeddings', 'saving']).optional(),
+  processedFiles: z.number().int().nonnegative().optional(),
+  totalFiles: z.number().int().nonnegative().optional(),
+  currentFile: z.string().optional(),
+  startedAt: z.string().datetime().optional(),
+  resumable: z.boolean().optional(),
 });
 export type RagStatus = z.infer<typeof RagStatusSchema>;
+
+export const IndexReportSchema = z.object({
+  workspaceId: z.string().uuid(),
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime(),
+  durationMs: z.number().nonnegative(),
+  totalFiles: z.number().int().nonnegative(),
+  indexedFiles: z.array(z.string()),
+  notIndexed: z.array(z.object({ path: z.string(), code: z.string(), reason: z.string() })),
+  notes: z.array(z.string()),
+});
+export type IndexReport = z.infer<typeof IndexReportSchema>;
 
 export const WorkspaceIdSchema = z.object({ workspaceId: z.string().uuid() });
 export const RagConsentRequestSchema = WorkspaceIdSchema.extend({ enabled: z.boolean() });
@@ -315,9 +380,12 @@ export type PreviewMetadata = {
   sha256: string;
   size: number;
   modifiedAt: string;
+  indexingWarning?: string;
 };
 export type PreviewResult =
+  | (PreviewMetadata & { kind: 'unavailable'; reason: string })
   | (PreviewMetadata & { kind: 'pdf' })
+  | (PreviewMetadata & { kind: 'image' })
   | (PreviewMetadata & { kind: 'text'; content: string })
   | (PreviewMetadata & { kind: 'document'; content: string })
   | (PreviewMetadata & {

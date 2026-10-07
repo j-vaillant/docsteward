@@ -257,12 +257,17 @@ OpenAI reçoit uniquement les éléments autorisés par le consentement. Aucun c
 
 Limites du POC :
 
-- maximum 1 000 documents ;
+- maximum 200 documents ;
 - maximum 2 000 caractères d'extrait par document ;
 - maximum 2 Mio de texte cumulé ;
 - au-delà, génération bloquée sans échantillonnage silencieux.
 
 La réponse du modèle référence les documents uniquement par `documentId`. Les chemins virtuels finaux sont normalisés et validés localement.
+
+Les fichiers texte dépassant 2 Mio et les PDF/Word/Excel dépassant 20 Mio participent
+au classement uniquement par leurs métadonnées. Les plafonds d’extraction sont
+100 pages par PDF, 10 feuilles par classeur et 100 000 caractères par feuille ; un
+dépassement empêche l’utilisation du contenu du fichier pour le classement.
 
 ## 9. Contrats partagés
 

@@ -7,6 +7,7 @@ import type {
   RagAnswer,
   RagFieldType,
   RagStatus,
+  IndexReport,
   VirtualTree,
   WorkspaceSummary,
 } from '@docsteward/contracts';
@@ -74,6 +75,13 @@ export const api = {
   },
   ragStatus: (workspaceId: string) =>
     request<RagStatus>(`/api/rag/status?${new URLSearchParams({ workspaceId })}`),
+  indexReport: (workspaceId: string) =>
+    request<IndexReport | null>(`/api/rag/report?${new URLSearchParams({ workspaceId })}`),
+  cancelIndex: (workspaceId: string) =>
+    request<{ cancelled: boolean }>('/api/rag/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId }),
+    }),
   setRagConsent: (workspaceId: string, enabled: boolean) =>
     request<{ enabled: boolean }>('/api/rag/consent', {
       method: 'POST',

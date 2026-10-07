@@ -5,6 +5,7 @@ import {
   ALLOWED_PREVIEW_EXTENSIONS,
   MAX_PREVIEW_BYTES,
   MAX_TEXT_BYTES,
+  ignoredFileReason,
   type FileEntry,
 } from '@docsteward/contracts';
 
@@ -88,7 +89,10 @@ async function assertNoSymlink(rootPath: string, relativePath: string): Promise<
 }
 
 function assertPreviewExtension(relativePath: string): void {
-  if (!allowedExtensions.has(extname(relativePath).toLowerCase())) {
+  if (
+    ignoredFileReason(relativePath) ||
+    !allowedExtensions.has(extname(relativePath).toLowerCase())
+  ) {
     throw new FsPolicyError(
       'FILE_TYPE_NOT_ALLOWED',
       'Ce type de fichier ne peut pas être prévisualisé.',
@@ -116,6 +120,35 @@ export function sha256(content: Uint8Array | string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
+export function decodeDocumentText(bytes: Uint8Array): string {
+  let text: string;
+  try {
+    if (bytes[0] === 0xff && bytes[1] === 0xfe)
+      text = new TextDecoder('utf-16le', { fatal: true }).decode(bytes);
+    else if (bytes[0] === 0xfe && bytes[1] === 0xff)
+      text = new TextDecoder('utf-16be', { fatal: true }).decode(bytes);
+    else {
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } catch {
+        text = new TextDecoder('windows-1252', { fatal: true }).decode(bytes);
+      }
+    }
+    for (const character of text) {
+      const code = character.charCodeAt(0);
+      if (code <= 8 || (code >= 14 && code <= 31) || (code >= 127 && code <= 159))
+        throw new Error('Binary data');
+    }
+    return text;
+  } catch {
+    throw new FsPolicyError(
+      'INVALID_UTF8',
+      'Le fichier contient des données binaires ou un encodage non pris en charge.',
+      415,
+    );
+  }
+}
+
 export async function listDirectory(rootPath: string, path = ''): Promise<FileEntry[]> {
   const target = resolveWithinRoot(rootPath, path, true);
   await assertNoSymlink(rootPath, path);
@@ -123,7 +156,9 @@ export async function listDirectory(rootPath: string, path = ''): Promise<FileEn
     const entries = await readdir(target, { withFileTypes: true });
     const result = await Promise.all(
       entries
-        .filter((entry) => entry.isDirectory() || entry.isFile())
+        .filter(
+          (entry) => entry.isDirectory() || (entry.isFile() && !ignoredFileReason(entry.name)),
+        )
         .map(async (entry): Promise<FileEntry> => {
           const childRelative = path ? `${path}/${entry.name}` : entry.name;
           const childPath = resolveWithinRoot(rootPath, childRelative);
@@ -161,6 +196,20 @@ export type PreviewFile = {
   size: number;
   modifiedAt: string;
 };
+
+export async function readFileMetadata(rootPath: string, relativePath: string) {
+  assertPreviewExtension(relativePath);
+  const target = resolveWithinRoot(rootPath, relativePath);
+  await assertNoSymlink(rootPath, relativePath);
+  try {
+    const info = await stat(target);
+    if (!info.isFile())
+      throw new FsPolicyError('FILE_NOT_FOUND', 'Le fichier demandé est introuvable.', 404);
+    return { size: info.size, modifiedAt: info.mtime.toISOString() };
+  } catch (error) {
+    throw mapSystemError(error);
+  }
+}
 
 export async function readPreviewFile(
   rootPath: string,

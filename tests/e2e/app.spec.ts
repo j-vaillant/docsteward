@@ -13,6 +13,10 @@ test('ouvre le premier grand dossier sans lancer le classement et charge les enf
   const nested = join(workspace, 'archives');
   await mkdir(nested, { recursive: true });
   await writeFile(join(workspace, 'bonjour.md'), '# Bonjour');
+  await writeFile(
+    join(workspace, 'grand.txt'),
+    'Document hors limite IA.\n' + 'a'.repeat(2 * 1024 * 1024),
+  );
   await Promise.all(
     Array.from({ length: 1_001 }, (_, index) =>
       writeFile(join(nested, `document-${index}.txt`), `Document ${index}`),
@@ -66,11 +70,20 @@ test('ouvre le premier grand dossier sans lancer le classement et charge les enf
     await expect(tree.getByRole('alert')).toContainText('Dossier temporairement indisponible.');
     await expect(tree.getByRole('status')).toHaveCount(0);
     await tree.getByRole('button', { name: 'Réessayer', exact: true }).click();
-    await expect(tree.locator('button.tree-item')).toHaveCount(1_003);
+    await expect(tree.locator('button.tree-item')).toHaveCount(1_004);
     expect(listings).toEqual(['', 'archives', 'archives']);
     await tree.getByRole('button', { name: /bonjour.md/ }).click();
     await expect(page.locator('.text-preview')).toBeVisible();
     await expect(page.locator('.text-preview')).toContainText('# Bonjour');
+    await tree.getByRole('button', { name: /grand.txt/ }).click();
+    await expect(page.locator('.indexing-warning')).toContainText('2 Mio');
+    await expect(page.locator('.text-preview')).toContainText('Document hors limite IA.');
+    const helpLabels = await electronApp.evaluate(({ Menu }) =>
+      Menu.getApplicationMenu()
+        ?.items.find((item) => item.label === 'Ai&de')
+        ?.submenu?.items.map((item) => item.label),
+    );
+    expect(helpLabels).toContain('Limites du produit');
   } finally {
     await electronApp.close();
   }
@@ -221,6 +234,16 @@ test('prévisualise un document local sans permettre sa modification', async () 
 test('active le RAG, épingle et actualise un indicateur persistant', async () => {
   const workspace = await mkdtemp(join(tmpdir(), 'docsteward-rag-e2e-'));
   await writeFile(join(workspace, 'chiffre-affaires.txt'), 'Chiffre d’affaires total : 22 000 €\n');
+  await writeFile(join(workspace, 'vide.txt'), '');
+  await writeFile(join(workspace, 'archive.epub'), 'image');
+  await writeFile(join(workspace, '~$document.docx'), 'temporaire');
+  await writeFile(
+    join(workspace, 'image.png'),
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jA7sAAAAASUVORK5CYII=',
+      'base64',
+    ),
+  );
   const userData = await mkdtemp(join(tmpdir(), 'docsteward-rag-e2e-profile-'));
   const electronApp = await electron.launch({
     executablePath: electronPath,
@@ -237,11 +260,40 @@ test('active le RAG, épingle et actualise un indicateur persistant', async () =
   try {
     const page = await electronApp.firstWindow();
     const settingsWindow = await electronApp.browserWindow(page);
+    await page.getByRole('button', { name: /^image\.png/ }).click();
+    await expect(page.locator('.tree')).not.toContainText('~$document.docx');
+    await expect(page.locator('.image-preview img')).toBeVisible();
+    await expect
+      .poll(() =>
+        page
+          .locator('.image-preview img')
+          .evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
+      .toBe(1);
     await expect(page.getByRole('button', { name: 'Configuration IA' })).toHaveCount(0);
     await page.getByRole('tab', { name: 'Configuration' }).click();
     await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: 'Activer pour ce dossier' }).click();
     await page.getByRole('button', { name: 'Indexer les documents' }).click();
+    await expect(page.getByRole('heading', { name: 'Rapport d’indexation' })).toBeVisible();
+    await expect(page.getByText('4 fichiers recensés · 2 indexés · 2 non indexés')).toBeVisible();
+    await page.getByText('Fichiers non indexés et raisons', { exact: true }).click();
+    await expect(page.locator('.index-report')).toContainText('Format non pris en charge');
+    await expect(page.locator('.index-report')).toContainText('Aucun texte exploitable');
+    const reportPath = join(userData, 'rapport-indexation.txt');
+    await electronApp.evaluate(({ BrowserWindow }, filePath) => {
+      BrowserWindow.getAllWindows()[0]!.webContents.session.once(
+        'will-download',
+        (_event, item) => {
+          item.setSavePath(filePath);
+        },
+      );
+    }, reportPath);
+    await page.getByRole('link', { name: 'Télécharger le rapport détaillé' }).click();
+    await expect
+      .poll(() => readFile(reportPath, 'utf8').catch(() => ''))
+      .toContain('vide.txt — Aucun texte exploitable');
+    await page.screenshot({ path: 'out/indexation-report.png' });
     await writeFile(join(workspace, 'nouveau-document.txt'), 'Nouveau document\n');
     await page.getByRole('button', { name: 'Mettre à jour l’index' }).click();
     await expect(page.getByRole('button', { name: 'nouveau-document.txt' })).toBeVisible();
